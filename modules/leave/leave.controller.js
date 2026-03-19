@@ -1,10 +1,11 @@
-import { createLeaveService } from "./leave.service.js";
-
 export const createLeave = async (req, res) => {
-  try {
-    const result = await createLeaveService(req.user, req.body);
-    res.json(result);
-  } catch (err) {
-    res.status(400).json({ message: err.message });
-  }
+  res.json({ message: "Create leave" });
+};
+
+export const getMyLeaves = async (req, res) => {
+  res.json([]);
+};
+
+export const getAllLeaves = async (req, res) => {
+  res.json([]);
 };
