@@ -5,7 +5,7 @@ import { findUserByEmployeeCode } from "./auth.repository.js";
 export const loginService = async (employee_code, password) => {
   const user = await findUserByEmployeeCode(employee_code);
 
-  if (!user) throw new Error("User not found");
+  if (!user) throw new Error("Login failed");
 
   const isMatch = await bcrypt.compare(password, user.password);
   if (!isMatch) throw new Error("Invalid password");
