@@ -32,6 +32,8 @@ export function csrfProtect(req, res, next) {
   const cookieToken = req.cookies?.csrf_token;
   const headerToken = req.headers["x-csrf-token"];
 
+  console.log("CSRF check:", { cookieToken, headerToken }); 
+
   if (!cookieToken || !headerToken || cookieToken !== headerToken) {
     return res.status(403).json({ message: "CSRF token invalid" });
   }

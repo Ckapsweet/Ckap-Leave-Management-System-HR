@@ -14,14 +14,12 @@ dotenv.config();
 
 const app = express();
 
-// credentials: true — จำเป็นสำหรับ httpOnly cookie ข้าม origin
 app.use(cors({
   origin:      process.env.FRONTEND_URL || "http://localhost:5173",
   credentials: true,
 }));
-
 app.use(express.json());
-app.use(cookieParser()); // อ่าน cookie จาก request
+app.use(cookieParser());
 
 // ── Routes ────────────────────────────────────────────────────
 app.use("/api/auth",           authRoutes);
@@ -30,10 +28,20 @@ app.use("/api/leave-requests", leaveRequestRoutes);
 app.use("/api/leave-balances", leaveBalanceRoutes);
 app.use("/api/admin",          adminRoutes);
 
-// ── Global error handler ──────────────────────────────────────
+// ── Global error handler — log ทุก error ─────────────────────
 app.use((err, req, res, next) => {
-  console.error(err);
-  res.status(err.status || 500).json({ message: err.message || "Internal Server Error" });
+  console.error("─────────────────────────────────────────");
+  console.error(`[ERROR] ${req.method} ${req.originalUrl}`);
+  console.error(`Status : ${err.status || 500}`);
+  console.error(`Message: ${err.message}`);
+  if (err.sql)        console.error(`SQL    : ${err.sql}`);
+  if (err.sqlMessage) console.error(`SQLMsg : ${err.sqlMessage}`);
+  console.error(`Stack  :`, err.stack?.split("\n").slice(0, 4).join("\n"));
+  console.error("─────────────────────────────────────────");
+
+  res.status(err.status || 500).json({
+    message: err.message || "Internal Server Error",
+  });
 });
 
 export default app;
