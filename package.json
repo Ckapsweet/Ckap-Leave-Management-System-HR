@@ -3,7 +3,12 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "transform": {}
   },
   "dependencies": {
     "bcrypt": "^6.0.0",
@@ -16,5 +21,12 @@
     "mysql2": "^3.20.0",
     "nodemon": "^3.1.14",
     "uuid": "^13.0.0"
+  },
+  "devDependencies": {
+    "@jest/globals": "^30.3.0",
+    "@types/jest": "^30.0.0",
+    "@types/supertest": "^7.2.0",
+    "jest": "^30.3.0",
+    "supertest": "^7.2.2"
   }
 }
