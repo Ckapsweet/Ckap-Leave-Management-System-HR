@@ -2,6 +2,7 @@
 import { Router } from "express";
 import pool from "../config/db.js";
 import { authenticate, requireAdmin, csrfProtect } from "../middleware/auth.js";
+import { logAudit } from "../middleware/audit.js";
 
 const router = Router();
 router.use(authenticate, requireAdmin);
@@ -33,7 +34,7 @@ function mapRow(r) {
   };
 }
 
-// GET /api/admin/leave-requests
+// ── GET /api/admin/leave-requests ────────────────────────────
 router.get("/leave-requests", async (req, res, next) => {
   try {
     const { status, user_id, year } = req.query;
@@ -58,7 +59,7 @@ router.get("/leave-requests", async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// PATCH /api/admin/leave-requests/:id/approve
+// ── PATCH /api/admin/leave-requests/:id/approve ──────────────
 router.patch("/leave-requests/:id/approve", csrfProtect, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
@@ -74,6 +75,12 @@ router.patch("/leave-requests/:id/approve", csrfProtect, async (req, res, next) 
       return res.status(400).json({ message: "คำขอนี้ถูกดำเนินการไปแล้ว" });
     }
 
+    const before = {
+      status:     rows[0].status,
+      approved_by: rows[0].approved_by,
+      approved_at: rows[0].approved_at,
+    };
+
     await conn.beginTransaction();
     const now = new Date();
 
@@ -88,7 +95,6 @@ router.patch("/leave-requests/:id/approve", csrfProtect, async (req, res, next) 
       [requestId, approverId, comment, now, comment, now]
     );
 
-    // ── อัปเดต pool รวม ──────────────────────────────────────
     const year = new Date(rows[0].start_date).getFullYear();
     await conn.query(
       `UPDATE user_leave_pool
@@ -98,6 +104,24 @@ router.patch("/leave-requests/:id/approve", csrfProtect, async (req, res, next) 
     );
 
     await conn.commit();
+
+    // ── audit log ─────────────────────────────────────────────
+    await logAudit({
+      req,
+      action:     "leave.approve",
+      targetType: "leave_request",
+      targetId:   Number(requestId),
+      before,
+      after: {
+        status:      "approved",
+        approved_by: approverId,
+        approved_at: now,
+        comment:     comment ?? null,
+      },
+      note: comment ?? null,
+      conn,
+    });
+
     res.json({ message: "อนุมัติคำขอลาเรียบร้อย" });
   } catch (err) {
     await conn.rollback();
@@ -105,7 +129,7 @@ router.patch("/leave-requests/:id/approve", csrfProtect, async (req, res, next) 
   } finally { conn.release(); }
 });
 
-// PATCH /api/admin/leave-requests/:id/reject
+// ── PATCH /api/admin/leave-requests/:id/reject ───────────────
 router.patch("/leave-requests/:id/reject", csrfProtect, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
@@ -120,6 +144,12 @@ router.patch("/leave-requests/:id/reject", csrfProtect, async (req, res, next) =
     if (rows[0].status !== "pending") {
       return res.status(400).json({ message: "คำขอนี้ถูกดำเนินการไปแล้ว" });
     }
+
+    const before = {
+      status:      rows[0].status,
+      approved_by: rows[0].approved_by,
+      approved_at: rows[0].approved_at,
+    };
 
     await conn.beginTransaction();
     const now = new Date();
@@ -136,6 +166,24 @@ router.patch("/leave-requests/:id/reject", csrfProtect, async (req, res, next) =
     );
 
     await conn.commit();
+
+    // ── audit log ─────────────────────────────────────────────
+    await logAudit({
+      req,
+      action:     "leave.reject",
+      targetType: "leave_request",
+      targetId:   Number(requestId),
+      before,
+      after: {
+        status:      "rejected",
+        approved_by: approverId,
+        approved_at: now,
+        comment:     comment ?? null,
+      },
+      note: comment ?? null,
+      conn,
+    });
+
     res.json({ message: "ปฏิเสธคำขอลาเรียบร้อย" });
   } catch (err) {
     await conn.rollback();
@@ -143,7 +191,7 @@ router.patch("/leave-requests/:id/reject", csrfProtect, async (req, res, next) =
   } finally { conn.release(); }
 });
 
-// GET /api/admin/users
+// ── GET /api/admin/users ──────────────────────────────────────
 router.get("/users", async (req, res, next) => {
   try {
     const [rows] = await pool.query(
@@ -153,7 +201,7 @@ router.get("/users", async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// GET /api/admin/leave-pool/:user_id — ดู pool ของ user
+// ── GET /api/admin/leave-pool/:user_id ───────────────────────
 router.get("/leave-pool/:user_id", async (req, res, next) => {
   try {
     const year = req.query.year ?? new Date().getFullYear();
@@ -172,7 +220,7 @@ router.get("/leave-pool/:user_id", async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// PATCH /api/admin/leave-pool/:user_id — ตั้งวันลาคงเหลือ
+// ── PATCH /api/admin/leave-pool/:user_id ─────────────────────
 router.patch("/leave-pool/:user_id", csrfProtect, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
@@ -186,12 +234,13 @@ router.patch("/leave-pool/:user_id", csrfProtect, async (req, res, next) => {
       return res.status(400).json({ message: "วันลาคงเหลือต้องไม่ติดลบ" });
     }
 
-    // ดึง used_days ปัจจุบัน
+    // snapshot before
     const [existing] = await conn.query(
-      "SELECT used_days FROM user_leave_pool WHERE user_id = ? AND year = ? LIMIT 1",
+      "SELECT total_days, used_days FROM user_leave_pool WHERE user_id = ? AND year = ? LIMIT 1",
       [userId, year]
     );
-    const used_days  = existing[0]?.used_days ?? 0;
+    const before     = existing[0] ?? null;
+    const used_days  = before?.used_days ?? 0;
     const total_days = parseFloat(remaining_days) + parseFloat(used_days);
 
     await conn.beginTransaction();
@@ -202,6 +251,17 @@ router.patch("/leave-pool/:user_id", csrfProtect, async (req, res, next) => {
       [userId, total_days, used_days, year, total_days]
     );
     await conn.commit();
+
+    // ── audit log ─────────────────────────────────────────────
+    await logAudit({
+      req,
+      action:     "balance.update",
+      targetType: "leave_balance",
+      targetId:   Number(userId),
+      before:     before ? { total_days: before.total_days, used_days: before.used_days } : null,
+      after:      { total_days, used_days },
+      note:       `แก้ไขวันลาของ user_id ${userId} ปี ${year} → คงเหลือ ${remaining_days} วัน`,
+    });
 
     const [rows] = await pool.query(
       "SELECT * FROM user_leave_pool WHERE user_id = ? AND year = ? LIMIT 1",
