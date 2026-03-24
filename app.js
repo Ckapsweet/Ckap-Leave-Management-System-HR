@@ -9,6 +9,7 @@ import leaveTypeRoutes    from "./routes/leaveTypes.js";
 import leaveRequestRoutes from "./routes/leaveRequests.js";
 import leaveBalanceRoutes from "./routes/leaveBalances.js";
 import adminRoutes        from "./routes/admin.js";
+import superAdminRoutes   from "./routes/superAdmin.js";  
 
 dotenv.config();
 
@@ -27,8 +28,9 @@ app.use("/api/leave-types",    leaveTypeRoutes);
 app.use("/api/leave-requests", leaveRequestRoutes);
 app.use("/api/leave-balances", leaveBalanceRoutes);
 app.use("/api/admin",          adminRoutes);
+app.use("/api/super-admin",    superAdminRoutes);          
 
-// ── Global error handler — log ทุก error ─────────────────────
+// ── Global error handler ──────────────────────────────────────
 app.use((err, req, res, next) => {
   console.error("─────────────────────────────────────────");
   console.error(`[ERROR] ${req.method} ${req.originalUrl}`);

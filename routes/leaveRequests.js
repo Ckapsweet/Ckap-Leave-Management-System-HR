@@ -2,6 +2,7 @@
 import { Router } from "express";
 import pool from "../config/db.js";
 import { authenticate, csrfProtect } from "../middleware/auth.js";
+import { logAudit } from "../middleware/audit.js";
 
 const router = Router();
 
@@ -46,7 +47,6 @@ router.get("/my", authenticate, async (req, res, next) => {
 });
 
 // ── GET /api/leave-requests/report/monthly?year= ─────────────
-// ต้องอยู่ก่อน /:id เพื่อไม่ให้ถูกดักโดย /:id
 router.get("/report/monthly", authenticate, async (req, res, next) => {
   try {
     const year = req.query.year ?? new Date().getFullYear();
@@ -110,7 +110,6 @@ router.get("/report/yearly", authenticate, async (req, res, next) => {
 });
 
 // ── GET /api/leave-requests/:id ───────────────────────────────
-// ต้องอยู่หลัง /my, /report/* เสมอ
 router.get("/:id", authenticate, async (req, res, next) => {
   try {
     const [rows] = await pool.query(
@@ -161,7 +160,6 @@ router.post("/", authenticate, csrfProtect, async (req, res, next) => {
 
     const year = new Date(start_date).getFullYear();
 
-    // เช็ค pool รวม — สร้างอัตโนมัติ 15 วัน ถ้ายังไม่มี
     const [poolRows] = await conn.query(
       "SELECT * FROM user_leave_pool WHERE user_id = ? AND year = ? LIMIT 1",
       [req.user.id, year]
@@ -189,7 +187,6 @@ router.post("/", authenticate, csrfProtect, async (req, res, next) => {
       });
     }
 
-    // เช็ค overlap วันลาเป็นวัน
     if (!isHour) {
       const [overlap] = await conn.query(
         `SELECT id FROM leave_requests
@@ -219,7 +216,27 @@ router.post("/", authenticate, csrfProtect, async (req, res, next) => {
        WHERE lr.id = ?`,
       [result.insertId]
     );
-    res.status(201).json(mapRow(rows[0]));
+    const created = mapRow(rows[0]);
+
+    // ── audit log ─────────────────────────────────────────────
+    await logAudit({
+      req,
+      action:     "leave.create",
+      targetType: "leave_request",
+      targetId:   result.insertId,
+      after: {
+        leave_type_id,
+        start_date,
+        end_date,
+        start_time,
+        end_time,
+        total_days: totalDaysToSave,
+        reason,
+        status: "pending",
+      },
+    });
+
+    res.status(201).json(created);
   } catch (err) {
     console.error("[POST /leave-requests] error:", err.message, err.sqlMessage ?? "");
     await conn.rollback();
@@ -227,7 +244,7 @@ router.post("/", authenticate, csrfProtect, async (req, res, next) => {
   } finally { conn.release(); }
 });
 
-// ── DELETE /api/leave-requests/:id ───────────────────────────
+// ── DELETE /api/leave-requests/:id  (user cancel) ────────────
 router.delete("/:id", authenticate, csrfProtect, async (req, res, next) => {
   try {
     const [rows] = await pool.query(
@@ -238,7 +255,24 @@ router.delete("/:id", authenticate, csrfProtect, async (req, res, next) => {
     if (rows[0].status !== "pending") {
       return res.status(400).json({ message: "ยกเลิกได้เฉพาะคำขอที่ยังรออนุมัติ" });
     }
+
     await pool.query("DELETE FROM leave_requests WHERE id = ?", [req.params.id]);
+
+    // ── audit log ─────────────────────────────────────────────
+    await logAudit({
+      req,
+      action:     "leave.cancel",
+      targetType: "leave_request",
+      targetId:   rows[0].id,
+      before: {
+        status:     rows[0].status,
+        start_date: rows[0].start_date,
+        end_date:   rows[0].end_date,
+        total_days: rows[0].total_days,
+        reason:     rows[0].reason,
+      },
+    });
+
     res.json({ message: "ยกเลิกคำขอลาเรียบร้อย" });
   } catch (err) { next(err); }
 });
