@@ -1,32 +1,20 @@
 pipeline {
     agent { label 'Ckap' }
 
+    options {
+        timeout(time: 10, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+    }
+
     environment {
-        BASE_DIR = '/home/Ckap'
+        BASE_DIR = '/home/adminis'
         APP_NAME = 'leave-backend'
     }
 
     stages {
-
-        stage('Clone Repository') {
+        stage('Checkout') {
             steps {
-                withCredentials([
-                    usernamePassword(
-                        credentialsId: 'github',
-                        usernameVariable: 'githubUser',
-                        passwordVariable: 'githubPwd'
-                    )
-                ]) {
-                    sh '''
-                    set -e
-                    cd ${BASE_DIR}
-
-                    rm -rf backend
-
-                    GIT_URL="https://${githubUser}:${githubPwd}@github.com/Ckapsweet/Ckap-Leave-Management-System-HR.git"
-                    git clone $GIT_URL backend
-                    '''
-                }
+                checkout scm
             }
         }
 
@@ -34,9 +22,22 @@ pipeline {
             steps {
                 sh '''
                 set -e
-                cd ${BASE_DIR}/backend
+                npm install --omit=dev
+                '''
+            }
+        }
 
-                npm install
+        stage('Deploy to Server') {
+            steps {
+                sh '''
+                set -e
+
+                # สร้าง directory ถ้ายังไม่มี
+                mkdir -p ${BASE_DIR}/backend
+
+                # ก๊อปปี้โค้ดจาก workspace ไปที่ deploy path
+                rm -rf ${BASE_DIR}/backend
+                cp -r . ${BASE_DIR}/backend
                 '''
             }
         }
@@ -45,16 +46,11 @@ pipeline {
             steps {
                 sh '''
                 set -e
-                cd ${BASE_DIR}/backend
-
-                # ถ้ามี pm2 อยู่แล้ว → restart
-                pm2 describe $APP_NAME > /dev/null 2>&1
-                if [ $? -eq 0 ]; then
+                if pm2 describe $APP_NAME > /dev/null 2>&1; then
                     pm2 restart $APP_NAME
                 else
-                    pm2 start index.js --name $APP_NAME
+                    pm2 start ${BASE_DIR}/backend/server.js --name $APP_NAME
                 fi
-
                 pm2 save
                 '''
             }
@@ -62,11 +58,8 @@ pipeline {
     }
 
     post {
-        success {
-            echo "Backend deployed successfully!"
-        }
-        failure {
-            echo "Backend deployment failed!"
-        }
+        // always { cleanWs() }
+        success { echo "✅ Backend deployed! Build #${BUILD_NUMBER}" }
+        failure  { echo "❌ Deployment failed! Build #${BUILD_NUMBER}" }
     }
 }
