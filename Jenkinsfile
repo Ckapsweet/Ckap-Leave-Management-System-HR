@@ -9,6 +9,7 @@ pipeline {
     environment {
         BASE_DIR = '/home/adminis'
         APP_NAME = 'leave-backend'
+        CONFIG_FILE_ID = 'ckap-backend-env'
     }
 
     stages {
@@ -20,25 +21,31 @@ pipeline {
 
         stage('Install Dependencies') {
             steps {
-                sh '''
-                set -e
-                npm install --omit=dev
-                '''
+                configFileProvider([configFile(fileId: "${CONFIG_FILE_ID}", targetLocation: '.env')]) {
+                    sh '''
+                    set -e
+                    echo "Node version: $(node -v)"
+                    echo "NPM version: $(npm -v)"
+                    npm install --omit=dev
+                    '''
+                }
             }
         }
 
         stage('Deploy to Server') {
             steps {
-                sh '''
-                set -e
+                configFileProvider([configFile(fileId: "${CONFIG_FILE_ID}", targetLocation: '.env')]) {
+                    sh '''
+                    set -e
 
-                # สร้าง directory ถ้ายังไม่มี
-                mkdir -p ${BASE_DIR}/backend
+                    # สร้าง directory ถ้ายังไม่มี
+                    mkdir -p ${BASE_DIR}/backend
 
-                # ก๊อปปี้โค้ดจาก workspace ไปที่ deploy path
-                rm -rf ${BASE_DIR}/backend
-                cp -r . ${BASE_DIR}/backend
-                '''
+                    # ลบโค้ดเก่าและก๊อปปี้โค้ดใหม่ไปที่ deploy path
+                    rm -rf ${BASE_DIR}/backend
+                    cp -r . ${BASE_DIR}/backend
+                    '''
+                }
             }
         }
 
@@ -58,7 +65,7 @@ pipeline {
     }
 
     post {
-        // always { cleanWs() }
+        always { cleanWs() }
         success { echo "✅ Backend deployed! Build #${BUILD_NUMBER}" }
         failure  { echo "❌ Deployment failed! Build #${BUILD_NUMBER}" }
     }
