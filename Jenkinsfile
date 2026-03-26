@@ -8,7 +8,7 @@ options {
 }
 
 environment {
-    BASE_DIR = '/home/adminis'
+    BASE_DIR = '/home/leave-sys'
     APP_NAME = 'leave-backend'
     CONFIG_FILE_ID = 'ckap-backend-env'
 }
