@@ -7,7 +7,7 @@ pipeline {
     }
 
     environment {
-        BASE_DIR = '/home/adminis'
+        BASE_DIR = '/var/lib/jenkins'
         APP_NAME = 'leave-backend'
         CONFIG_FILE_ID = 'ckap-backend-env'
     }
@@ -39,11 +39,11 @@ pipeline {
                     set -e
 
                     # สร้าง directory ถ้ายังไม่มี
-                    sudo mkdir -p ${BASE_DIR}/backend
+                    mkdir -p ${BASE_DIR}/backend
 
                     # ลบโค้ดเก่าและก๊อปปี้โค้ดใหม่ไปที่ deploy path
-                    sudo rm -rf ${BASE_DIR}/backend
-                    sudo cp -r . ${BASE_DIR}/backend
+                    rm -rf ${BASE_DIR}/backend
+                    cp -r . ${BASE_DIR}/backend
                     '''
                 }
             }
