@@ -39,11 +39,11 @@ pipeline {
                     set -e
 
                     # สร้าง directory ถ้ายังไม่มี
-                    mkdir -p ${BASE_DIR}/backend
+                    sudo mkdir -p ${BASE_DIR}/backend
 
                     # ลบโค้ดเก่าและก๊อปปี้โค้ดใหม่ไปที่ deploy path
-                    rm -rf ${BASE_DIR}/backend
-                    cp -r . ${BASE_DIR}/backend
+                    sudo rm -rf ${BASE_DIR}/backend
+                    sudo cp -r . ${BASE_DIR}/backend
                     '''
                 }
             }
