@@ -7,7 +7,7 @@ pipeline {
     }
 
     environment {
-        BASE_DIR = '/var/lib/jenkins'
+        BASE_DIR = '/home/adminis'
         APP_NAME = 'leave-backend'
         CONFIG_FILE_ID = 'ckap-backend-env'
     }
