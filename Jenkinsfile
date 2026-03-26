@@ -29,7 +29,7 @@ stages {
                 echo "Node version: $(node -v)"
                 echo "NPM version: $(npm -v)"
 
-                npm install --omit=dev
+                npm install 
                 '''
             }
         }
@@ -62,11 +62,8 @@ stages {
             sh '''
             set -e
 
-            if pm2 describe $APP_NAME > /dev/null 2>&1; then
-                pm2 restart $APP_NAME
-            else
-                pm2 start ${BASE_DIR}/backend/server.js --name $APP_NAME
-            fi
+            pm2 delete $APP_NAME || true
+            pm2 start ${BASE_DIR}/backend/server.js --name $APP_NAME
 
             pm2 save
             '''
