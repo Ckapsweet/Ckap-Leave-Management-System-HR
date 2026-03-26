@@ -45,7 +45,7 @@ stages {
                 mkdir -p ${BASE_DIR}/backend
 
                 # ลบเฉพาะไฟล์ด้านใน (ไม่ลบ folder)
-                rm -rf ${BASE_DIR}/backend/*
+                rm -rf ${BASE_DIR}/backend/
 
                 # copy source code
                 cp -r . ${BASE_DIR}/backend
