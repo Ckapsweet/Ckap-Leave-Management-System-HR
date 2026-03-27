@@ -35,6 +35,7 @@ pipeline {
 
         stage('Install Packages Dependencies') {
             steps {
+                configFileProvider([configFile(fileId: 'ckap-backend-env', targetLocation: "${APP_DIR}/.env")])
                 sh '''
                 cd /home/adminis/backend
                 npm install
@@ -53,7 +54,7 @@ pipeline {
                 fi
 
                 # start ใหม่
-                pm2 start src/server.js --name app
+                pm2 start server.js --name app
                 pm2 save
                 '''
             }
