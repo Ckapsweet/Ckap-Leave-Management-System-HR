@@ -1,5 +1,5 @@
 pipeline {
-agent { label 'Ckap' }
+agent { label 'leave-backend' }
 
 
 options {
@@ -11,21 +11,36 @@ environment {
     BASE_DIR = '/home/leave-sys'
     APP_NAME = 'leave-backend'
     CONFIG_FILE_ID = 'ckap-backend-env'
+    REPO_URL   = 'github.com/Ckapsweet/Leave-Management-System-HR.git'
 }
 
 stages {
 
-    stage('Checkout') {
-        steps {
-            checkout scm
-        }
-    }
+        stage('Clone Repository') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'github',
+                        usernameVariable: 'githubUser',
+                        passwordVariable: 'githubPwd'
+                    )
+                ]) {
+                    sh '''
+                    cd ${BASE_DIR}
+                    pwd && ls -l
+                    if [ -d "Leave-Management-System" ]; then
+                        rm -rf Leave-Management-System
+                    fi
+                    git clone https://${githubUser}:${githubPwd}@${REPO_URL}
+                    '''
+                }
+            }
+        }   
 
     stage('Install Dependencies') {
         steps {
             configFileProvider([configFile(fileId: "${CONFIG_FILE_ID}", targetLocation: '.env')]) {
                 sh '''
-                set -e
                 echo "Node version: $(node -v)"
                 echo "NPM version: $(npm -v)"
 
@@ -39,7 +54,6 @@ stages {
         steps {
             configFileProvider([configFile(fileId: "${CONFIG_FILE_ID}", targetLocation: '.env')]) {
                 sh '''
-                set -e
 
                 # สร้าง folder (ถ้ายังไม่มี)
                 mkdir -p ${BASE_DIR}/backend
