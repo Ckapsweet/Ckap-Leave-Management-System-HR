@@ -2,7 +2,7 @@ pipeline {
     agent { label 'leave-backend' }
 
     environment {
-        SERVER_IP = '185.84.161.78'
+        SERVER_IP = '192.168.0.198'
         APP_DIR = '/home/adminis/backend'
     }
 
