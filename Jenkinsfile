@@ -7,6 +7,7 @@ pipeline {
     }
 
     stages {
+
         stage('Clone Repository') {
             steps {
                 withCredentials([
@@ -17,37 +18,43 @@ pipeline {
                     )
                 ]) {
                     sh '''
-                    cd ~
-                    pwd && ls -l
+                    cd /home/adminis
+
+                    # ลบของเก่าถ้ามี
                     if [ -d "backend" ]; then
                         rm -rf backend
                     fi
+
+                    # 🔥 clone แล้วตั้งชื่อเป็น backend
                     GIT_URL="https://${githubUser}:${githubPwd}@github.com/Ckapsweet/Ckap-Leave-Management-System-HR.git"
-                    git clone $GIT_URL
+                    git clone $GIT_URL backend
                     '''
                 }
             }
         }
-         stage('Install Packages Dependencies') {
+
+        stage('Install Packages Dependencies') {
             steps {
-                sh 'cd /home/adminis/backend/ && npm install'
+                sh '''
+                cd /home/adminis/backend
+                npm install
+                '''
             }
         }
-         stage('Deploy Application') {
+
+        stage('Deploy Application') {
             steps {
-                echo "Deploying the application..."
                 sh '''
-                    cd /home/adminis/ && pwd
-                    if pm2 list | grep -q 'app'; then
-                        echo "Found 'app' process, stopping it..."
-                        pm2 delete app
-                    else
-                        echo "'app' process not found, nothing to stop."
-                    fi
-                '''
-                sh '''
-                    echo "Starting 'app' process..."
-                    pm2 start /home/adminis/backend/src/server.js --name app
+                cd /home/adminis/backend
+
+                # หยุด app เดิม (ถ้ามี)
+                if pm2 list | grep -q 'app'; then
+                    pm2 delete app
+                fi
+
+                # start ใหม่
+                pm2 start src/server.js --name app
+                pm2 save
                 '''
             }
         }
