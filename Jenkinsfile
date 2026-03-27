@@ -35,11 +35,12 @@ pipeline {
 
         stage('Install Packages Dependencies') {
             steps {
-                configFileProvider([configFile(fileId: 'ckap-backend-env', targetLocation: "${APP_DIR}/.env")])
-                sh '''
-                cd /home/adminis/backend
-                npm install
-                '''
+                configFileProvider([configFile(fileId: 'ckap-backend-env', targetLocation: "${APP_DIR}/.env")]){
+                    sh '''
+                    cd /home/adminis/backend
+                    npm install
+                    '''
+                }
             }
         }
 
