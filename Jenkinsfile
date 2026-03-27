@@ -1,21 +1,12 @@
 pipeline {
-agent { label 'leave-backend' }
+    agent { label 'leave-backend' }
 
+    environment {
+        SERVER_IP = '185.84.161.78'
+        APP_DIR = '/home/adminis/backend'
+    }
 
-options {
-    timeout(time: 10, unit: 'MINUTES')
-    buildDiscarder(logRotator(numToKeepStr: '10'))
-}
-
-environment {
-    BASE_DIR = '/home/leave-sys'
-    APP_NAME = 'leave-backend'
-    CONFIG_FILE_ID = 'ckap-backend-env'
-    REPO_URL   = 'github.com/Ckapsweet/Leave-Management-System-HR.git'
-}
-
-stages {
-
+    stages {
         stage('Clone Repository') {
             steps {
                 withCredentials([
@@ -26,70 +17,48 @@ stages {
                     )
                 ]) {
                     sh '''
-                    cd ${BASE_DIR}
+                    cd ~
                     pwd && ls -l
-                    if [ -d "Leave-Management-System" ]; then
-                        rm -rf Leave-Management-System
+                    if [ -d "backend" ]; then
+                        rm -rf backend
                     fi
-                    git clone https://${githubUser}:${githubPwd}@${REPO_URL}
+                    GIT_URL="https://${githubUser}:${githubPwd}@github.com/Ckapsweet/Ckap-Leave-Management-System-HR.git"
+                    git clone $GIT_URL
                     '''
                 }
             }
-        }   
-
-    stage('Install Dependencies') {
-        steps {
-            configFileProvider([configFile(fileId: "${CONFIG_FILE_ID}", targetLocation: '.env')]) {
+        }
+         stage('Install Packages Dependencies') {
+            steps {
+                sh 'cd /home/adminis/backend/ && npm install'
+            }
+        }
+         stage('Deploy Application') {
+            steps {
+                echo "Deploying the application..."
                 sh '''
-                echo "Node version: $(node -v)"
-                echo "NPM version: $(npm -v)"
-
-                npm install 
+                    cd /home/adminis/ && pwd
+                    if pm2 list | grep -q 'app'; then
+                        echo "Found 'app' process, stopping it..."
+                        pm2 delete app
+                    else
+                        echo "'app' process not found, nothing to stop."
+                    fi
+                '''
+                sh '''
+                    echo "Starting 'app' process..."
+                    pm2 start /home/adminis/backend/src/server.js --name app
                 '''
             }
         }
     }
 
-    stage('Deploy to Server') {
-        steps {
-            configFileProvider([configFile(fileId: "${CONFIG_FILE_ID}", targetLocation: '.env')]) {
-                sh '''
-
-                # สร้าง folder (ถ้ายังไม่มี)
-                mkdir -p ${BASE_DIR}/backend
-
-                # ลบเฉพาะไฟล์ด้านใน (ไม่ลบ folder)
-                rm -rf ${BASE_DIR}/backend/
-
-                # copy source code
-                cp -r . ${BASE_DIR}/backend
-
-                # 🔥 สำคัญ: copy .env ไปด้วย
-                cp .env ${BASE_DIR}/backend/.env
-                '''
-            }
+    post {
+        success {
+            echo "Deployment completed successfully!"
+        }
+        failure {
+            echo "Deployment failed!"
         }
     }
-
-    stage('Start / Restart Server') {
-        steps {
-            sh '''
-            set -e
-
-            pm2 delete $APP_NAME || true
-            pm2 start ${BASE_DIR}/backend/server.js --name $APP_NAME
-
-            pm2 save
-            '''
-        }
-    }
-}
-
-post {
-    always { cleanWs() }
-    success { echo "✅ Backend deployed! Build #${BUILD_NUMBER}" }
-    failure  { echo "❌ Deployment failed! Build #${BUILD_NUMBER}" }
-}
-
-
 }
