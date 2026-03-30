@@ -34,10 +34,30 @@ function mapRow(r) {
   };
 }
 
+/**
+ * assertSameDept — ตรวจสอบว่า manager ไม่ได้ข้ามแผนก
+ * @param {object} req      - Express request
+ * @param {string} dept     - department ของ target user
+ * @param {object} res      - Express response (คืน 403 ถ้าไม่ผ่าน)
+ * @returns {boolean}       - true = ผ่าน, false = ส่ง 403 ไปแล้ว
+ */
+function assertSameDept(req, res, dept) {
+  if (req.user.role === "manager" && req.user.department !== dept) {
+    res.status(403).json({ message: "ไม่มีสิทธิ์จัดการพนักงานนอกแผนกของคุณ" });
+    return false;
+  }
+  return true;
+}
+
 // ── GET /api/admin/leave-requests ────────────────────────────
 router.get("/leave-requests", async (req, res, next) => {
   try {
     const { status, user_id, year } = req.query;
+
+    // manager เห็นเฉพาะแผนกตัวเอง, hr เห็นทุกแผนก
+    const isManager = req.user.role === "manager";
+    const managerDept = req.user.department;
+
     let sql = `
       SELECT lr.*, u.full_name AS user_full_name, u.employee_code, u.department,
              lt.name AS leave_type_name, lt.max_days AS leave_type_max_days,
@@ -49,9 +69,10 @@ router.get("/leave-requests", async (req, res, next) => {
       LEFT JOIN leave_approvals la ON la.leave_request_id = lr.id
       WHERE 1=1`;
     const params = [];
-    if (status)  { sql += " AND lr.status = ?";           params.push(status); }
-    if (user_id) { sql += " AND lr.user_id = ?";          params.push(user_id); }
-    if (year)    { sql += " AND YEAR(lr.start_date) = ?"; params.push(year); }
+    if (isManager) { sql += " AND u.department = ?";        params.push(managerDept); }
+    if (status)    { sql += " AND lr.status = ?";           params.push(status); }
+    if (user_id)   { sql += " AND lr.user_id = ?";          params.push(user_id); }
+    if (year)      { sql += " AND YEAR(lr.start_date) = ?"; params.push(year); }
     sql += " ORDER BY lr.created_at DESC";
 
     const [rows] = await pool.query(sql, params);
@@ -68,9 +89,14 @@ router.patch("/leave-requests/:id/approve", csrfProtect, async (req, res, next) 
     const approverId = req.user.id;
 
     const [rows] = await conn.query(
-      "SELECT * FROM leave_requests WHERE id = ? LIMIT 1", [requestId]
+      `SELECT lr.*, u.department AS user_dept
+       FROM leave_requests lr
+       JOIN users u ON lr.user_id = u.id
+       WHERE lr.id = ? LIMIT 1`,
+      [requestId]
     );
     if (!rows[0]) return res.status(404).json({ message: "ไม่พบคำขอลา" });
+    if (!assertSameDept(req, res, rows[0].user_dept)) return;   // ← guard
     if (rows[0].status !== "pending") {
       return res.status(400).json({ message: "คำขอนี้ถูกดำเนินการไปแล้ว" });
     }
@@ -138,9 +164,14 @@ router.patch("/leave-requests/:id/reject", csrfProtect, async (req, res, next) =
     const approverId = req.user.id;
 
     const [rows] = await conn.query(
-      "SELECT * FROM leave_requests WHERE id = ? LIMIT 1", [requestId]
+      `SELECT lr.*, u.department AS user_dept
+       FROM leave_requests lr
+       JOIN users u ON lr.user_id = u.id
+       WHERE lr.id = ? LIMIT 1`,
+      [requestId]
     );
     if (!rows[0]) return res.status(404).json({ message: "ไม่พบคำขอลา" });
+    if (!assertSameDept(req, res, rows[0].user_dept)) return;   // ← guard
     if (rows[0].status !== "pending") {
       return res.status(400).json({ message: "คำขอนี้ถูกดำเนินการไปแล้ว" });
     }
@@ -194,8 +225,14 @@ router.patch("/leave-requests/:id/reject", csrfProtect, async (req, res, next) =
 // ── GET /api/admin/users ──────────────────────────────────────
 router.get("/users", async (req, res, next) => {
   try {
+    // manager เห็นเฉพาะ user ในแผนกตัวเอง, hr เห็นทุกคน
+    const isManager = req.user.role === "manager";
+    const extra = isManager ? " WHERE department = ?" : "";
+    const params = isManager ? [req.user.department] : [];
+
     const [rows] = await pool.query(
-      "SELECT id, employee_code, full_name, department, role, created_at FROM users ORDER BY id ASC"
+      `SELECT id, employee_code, full_name, department, role, created_at FROM users${extra} ORDER BY id ASC`,
+      params
     );
     res.json(rows);
   } catch (err) { next(err); }
@@ -205,6 +242,14 @@ router.get("/users", async (req, res, next) => {
 router.get("/leave-pool/:user_id", async (req, res, next) => {
   try {
     const year = req.query.year ?? new Date().getFullYear();
+
+    // ตรวจแผนกก่อน
+    const [uRows] = await pool.query(
+      "SELECT department FROM users WHERE id = ? LIMIT 1", [req.params.user_id]
+    );
+    if (!uRows[0]) return res.status(404).json({ message: "ไม่พบผู้ใช้งาน" });
+    if (!assertSameDept(req, res, uRows[0].department)) return;  // ← guard
+
     const [rows] = await pool.query(
       "SELECT * FROM user_leave_pool WHERE user_id = ? AND year = ? LIMIT 1",
       [req.params.user_id, year]
@@ -233,6 +278,13 @@ router.patch("/leave-pool/:user_id", csrfProtect, async (req, res, next) => {
     if (remaining_days < 0) {
       return res.status(400).json({ message: "วันลาคงเหลือต้องไม่ติดลบ" });
     }
+
+    // ตรวจแผนกก่อน
+    const [uRows] = await conn.query(
+      "SELECT department FROM users WHERE id = ? LIMIT 1", [userId]
+    );
+    if (!uRows[0]) return res.status(404).json({ message: "ไม่พบผู้ใช้งาน" });
+    if (!assertSameDept(req, res, uRows[0].department)) return;  // ← guard
 
     // snapshot before
     const [existing] = await conn.query(

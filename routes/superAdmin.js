@@ -1,9 +1,9 @@
 // routes/superAdmin.js
 import { Router } from "express";
-import bcrypt      from "bcrypt";
-import pool        from "../config/db.js";
+import bcrypt from "bcrypt";
+import pool from "../config/db.js";
 import { authenticate, csrfProtect } from "../middleware/auth.js";
-import { requireRole, logAudit }     from "../middleware/audit.js";
+import { requireRole, logAudit } from "../middleware/audit.js";
 
 const router = Router();
 
@@ -26,19 +26,19 @@ router.get("/audit-logs", async (req, res, next) => {
       target_type,
       date_from,
       date_to,
-      page  = 1,
+      page = 1,
       limit = 50,
     } = req.query;
 
     const offset = (Number(page) - 1) * Number(limit);
     const params = [];
-    const where  = ["1=1"];
+    const where = ["1=1"];
 
-    if (action)      { where.push("al.action      = ?");     params.push(action); }
-    if (actor_id)    { where.push("al.actor_id    = ?");     params.push(Number(actor_id)); }
-    if (target_type) { where.push("al.target_type = ?");     params.push(target_type); }
-    if (date_from)   { where.push("al.created_at >= ?");     params.push(date_from); }
-    if (date_to)     { where.push("al.created_at <= ?");     params.push(date_to + " 23:59:59"); }
+    if (action) { where.push("al.action      = ?"); params.push(action); }
+    if (actor_id) { where.push("al.actor_id    = ?"); params.push(Number(actor_id)); }
+    if (target_type) { where.push("al.target_type = ?"); params.push(target_type); }
+    if (date_from) { where.push("al.created_at >= ?"); params.push(date_from); }
+    if (date_to) { where.push("al.created_at <= ?"); params.push(date_to + " 23:59:59"); }
 
     // total count
     const [countRows] = await pool.query(
@@ -70,15 +70,15 @@ router.get("/audit-logs", async (req, res, next) => {
     const data = rows.map((r) => ({
       ...r,
       before_data: r.before_data ? JSON.parse(r.before_data) : null,
-      after_data:  r.after_data  ? JSON.parse(r.after_data)  : null,
+      after_data: r.after_data ? JSON.parse(r.after_data) : null,
     }));
 
     res.json({
       data,
       pagination: {
         total,
-        page:       Number(page),
-        limit:      Number(limit),
+        page: Number(page),
+        limit: Number(limit),
         totalPages: Math.ceil(total / Number(limit)),
       },
     });
@@ -109,11 +109,11 @@ router.get("/audit-logs/actions", async (req, res, next) => {
 router.get("/users", async (req, res, next) => {
   try {
     const { role, department, search } = req.query;
-    const where  = ["1=1"];
+    const where = ["1=1"];
     const params = [];
 
-    if (role)       { where.push("role       = ?");  params.push(role); }
-    if (department) { where.push("department = ?");  params.push(department); }
+    if (role) { where.push("role       = ?"); params.push(role); }
+    if (department) { where.push("department = ?"); params.push(department); }
     if (search) {
       where.push("(full_name LIKE ? OR employee_code LIKE ?)");
       params.push(`%${search}%`, `%${search}%`);
@@ -162,11 +162,11 @@ router.post("/users", csrfProtect, async (req, res, next) => {
 
     await logAudit({
       req,
-      action:     "user.create",
+      action: "user.create",
       targetType: "user",
-      targetId:   result.insertId,
-      after:      newUser,
-      note:       `สร้าง user ${employee_code} (${role})`,
+      targetId: result.insertId,
+      after: newUser,
+      note: `สร้าง user ${employee_code} (${role})`,
     });
 
     res.status(201).json(newUser);
@@ -201,12 +201,12 @@ router.patch("/users/:id/role", csrfProtect, async (req, res, next) => {
 
     await logAudit({
       req,
-      action:     "user.role_change",
+      action: "user.role_change",
       targetType: "user",
-      targetId:   rows[0].id,
+      targetId: rows[0].id,
       before,
-      after:      { role },
-      note:       `${rows[0].employee_code} เปลี่ยน role: ${before.role} → ${role}`,
+      after: { role },
+      note: `${rows[0].employee_code} เปลี่ยน role: ${before.role} → ${role}`,
     });
 
     res.json({ message: "เปลี่ยน role เรียบร้อย", role });
@@ -232,11 +232,11 @@ router.delete("/users/:id", csrfProtect, async (req, res, next) => {
 
     await logAudit({
       req,
-      action:     "user.delete",
+      action: "user.delete",
       targetType: "user",
-      targetId:   rows[0].id,
-      before:     { employee_code: rows[0].employee_code, full_name: rows[0].full_name, role: rows[0].role },
-      note:       `ลบ user ${rows[0].employee_code}`,
+      targetId: rows[0].id,
+      before: { employee_code: rows[0].employee_code, full_name: rows[0].full_name, role: rows[0].role },
+      note: `ลบ user ${rows[0].employee_code}`,
     });
 
     res.json({ message: "ลบผู้ใช้งานเรียบร้อย" });
