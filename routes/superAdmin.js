@@ -7,8 +7,8 @@ import { requireRole, logAudit }     from "../middleware/audit.js";
 
 const router = Router();
 
-// ทุก route ใน superAdmin ต้อง authenticate + เป็น super_admin เท่านั้น
-router.use(authenticate, requireRole("super_admin"));
+// ทุก route ใน superAdmin ต้อง authenticate + เป็น hr เท่านั้น
+router.use(authenticate, requireRole("hr"));
 
 // ─────────────────────────────────────────────────────────────
 // AUDIT LOGS
@@ -141,7 +141,7 @@ router.post("/users", csrfProtect, async (req, res, next) => {
     if (!employee_code || !full_name || !password) {
       return res.status(400).json({ message: "กรุณากรอกข้อมูลให้ครบถ้วน" });
     }
-    const allowedRoles = ["user", "hr", "admin", "super_admin"];
+    const allowedRoles = ["user", "manager", "hr"];
     if (!allowedRoles.includes(role)) {
       return res.status(400).json({ message: "role ไม่ถูกต้อง" });
     }
@@ -180,7 +180,7 @@ router.post("/users", csrfProtect, async (req, res, next) => {
 router.patch("/users/:id/role", csrfProtect, async (req, res, next) => {
   try {
     const { role } = req.body;
-    const allowedRoles = ["user", "hr", "admin", "super_admin"];
+    const allowedRoles = ["user", "manager", "hr"];
     if (!allowedRoles.includes(role)) {
       return res.status(400).json({ message: "role ไม่ถูกต้อง" });
     }

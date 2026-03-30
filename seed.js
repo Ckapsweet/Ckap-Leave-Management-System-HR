@@ -11,7 +11,7 @@ const run = async () => {
 
   await db.execute(
     "INSERT INTO users (employee_code, full_name, password, role) VALUES (?, ?, ?, ?)",
-    ["admin-0001", "super_admin", hash, "super_admin"]
+    ["hr-0001", "HR Admin", hash, "hr"]
   );
 
   console.log("Seed success");
