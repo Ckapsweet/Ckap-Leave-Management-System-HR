@@ -16,8 +16,8 @@ export function authenticate(req, res, next) {
 
 // ── เช็ค role admin ───────────────────────────────────────────
 export function requireAdmin(req, res, next) {
-  if (req.user?.role !== "admin") {
-    return res.status(403).json({ message: "Forbidden: admin only" });
+  if (req.user?.role !== "manager") {
+    return res.status(403).json({ message: "Forbidden: manager only" });
   }
   next();
 }
