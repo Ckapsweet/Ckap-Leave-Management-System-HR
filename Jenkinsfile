@@ -1,63 +1,61 @@
 pipeline {
-    agent { label 'Ckap' }
-
-    options {
-        timeout(time: 10, unit: 'MINUTES')
-        buildDiscarder(logRotator(numToKeepStr: '10'))
-    }
+    agent { label 'leave-backend' }
 
     environment {
-        BASE_DIR = '/home/adminis'
-        APP_NAME = 'leave-backend'
-        CONFIG_FILE_ID = 'ckap-backend-env'
+        SERVER_IP = '192.168.0.198'
+        APP_DIR = '/home/adminis/backend'
     }
 
     stages {
-        stage('Checkout') {
-            steps {
-                checkout scm
-            }
-        }
 
-        stage('Install Dependencies') {
+        stage('Clone Repository') {
             steps {
-                configFileProvider([configFile(fileId: "${CONFIG_FILE_ID}", targetLocation: '.env')]) {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'github',
+                        usernameVariable: 'githubUser',
+                        passwordVariable: 'githubPwd'
+                    )
+                ]) {
                     sh '''
-                    set -e
-                    echo "Node version: $(node -v)"
-                    echo "NPM version: $(npm -v)"
-                    npm install --omit=dev
+                    cd /home/adminis
+
+                    # ลบของเก่าถ้ามี
+                    if [ -d "backend" ]; then
+                        rm -rf backend
+                    fi
+
+                    # 🔥 clone แล้วตั้งชื่อเป็น backend
+                    GIT_URL="https://${githubUser}:${githubPwd}@github.com/Ckapsweet/Ckap-Leave-Management-System-HR.git"
+                    git clone $GIT_URL backend
                     '''
                 }
             }
         }
 
-        stage('Deploy to Server') {
+        stage('Install Packages Dependencies') {
             steps {
-                configFileProvider([configFile(fileId: "${CONFIG_FILE_ID}", targetLocation: '.env')]) {
+                configFileProvider([configFile(fileId: 'ckap-backend-env', targetLocation: "${APP_DIR}/.env")]){
                     sh '''
-                    set -e
-
-                    # สร้าง directory ถ้ายังไม่มี
-                    mkdir -p ${BASE_DIR}/backend
-
-                    # ลบโค้ดเก่าและก๊อปปี้โค้ดใหม่ไปที่ deploy path
-                    rm -rf ${BASE_DIR}/backend
-                    cp -r . ${BASE_DIR}/backend
+                    cd /home/adminis/backend
+                    npm install
                     '''
                 }
             }
         }
 
-        stage('Start / Restart Server') {
+        stage('Deploy Application') {
             steps {
                 sh '''
-                set -e
-                if pm2 describe $APP_NAME > /dev/null 2>&1; then
-                    pm2 restart $APP_NAME
-                else
-                    pm2 start ${BASE_DIR}/backend/server.js --name $APP_NAME
+                cd /home/adminis/backend
+
+                # หยุด app เดิม (ถ้ามี)
+                if pm2 list | grep -q 'app'; then
+                    pm2 delete app
                 fi
+
+                # start ใหม่
+                pm2 start server.js --name app
                 pm2 save
                 '''
             }
@@ -65,8 +63,11 @@ pipeline {
     }
 
     post {
-        always { cleanWs() }
-        success { echo "✅ Backend deployed! Build #${BUILD_NUMBER}" }
-        failure  { echo "❌ Deployment failed! Build #${BUILD_NUMBER}" }
+        success {
+            echo "Deployment completed successfully!"
+        }
+        failure {
+            echo "Deployment failed!"
+        }
     }
 }

@@ -46,7 +46,7 @@ export async function logAudit({ req, action, targetType, targetId, before = nul
  * requireRole — middleware ตรวจ role
  * ใช้แทน if (req.user.role !== 'admin') return 403
  *
- * @param  {...string} roles - roles ที่อนุญาต เช่น requireRole('admin', 'super_admin')
+ * @param  {...string} roles - roles ที่อนุญาต เช่น requireRole('manager', 'hr')
  */
 export function requireRole(...roles) {
   return (req, res, next) => {

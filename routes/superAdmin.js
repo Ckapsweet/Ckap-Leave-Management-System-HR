@@ -141,7 +141,7 @@ router.post("/users", csrfProtect, async (req, res, next) => {
     if (!employee_code || !full_name || !password) {
       return res.status(400).json({ message: "กรุณากรอกข้อมูลให้ครบถ้วน" });
     }
-    const allowedRoles = ["user", "hr", "admin", "super_admin"];
+    const allowedRoles = ["user", "hr", "manager"];
     if (!allowedRoles.includes(role)) {
       return res.status(400).json({ message: "role ไม่ถูกต้อง" });
     }
@@ -180,7 +180,7 @@ router.post("/users", csrfProtect, async (req, res, next) => {
 router.patch("/users/:id/role", csrfProtect, async (req, res, next) => {
   try {
     const { role } = req.body;
-    const allowedRoles = ["user", "hr", "admin", "super_admin"];
+    const allowedRoles = ["user", "hr", "manager"];
     if (!allowedRoles.includes(role)) {
       return res.status(400).json({ message: "role ไม่ถูกต้อง" });
     }

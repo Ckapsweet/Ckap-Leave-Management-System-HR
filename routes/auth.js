@@ -1,9 +1,9 @@
 // routes/auth.js
 import { Router } from "express";
-import bcrypt      from "bcrypt";
-import jwt         from "jsonwebtoken";
+import bcrypt from "bcrypt";
+import jwt from "jsonwebtoken";
 import { v4 as uuidv4 } from "uuid";
-import pool        from "../config/db.js";
+import pool from "../config/db.js";
 import { authenticate } from "../middleware/auth.js";
 
 const router = Router();
@@ -15,22 +15,22 @@ function setAuthCookies(res, jwtToken, csrfToken) {
   // JWT — httpOnly: JS อ่านไม่ได้
   res.cookie("token", jwtToken, {
     httpOnly: true,
-    secure:   IS_PROD,
+    secure: IS_PROD,
     sameSite: IS_PROD ? "strict" : "lax",
-    maxAge:   8 * 60 * 60 * 1000, // 8 ชั่วโมง
+    maxAge: 8 * 60 * 60 * 1000, // 8 ชั่วโมง
   });
 
   // CSRF token — JS อ่านได้ (ตั้งใจ) เพื่อให้ frontend อ่านแล้วใส่ใน header
   res.cookie("csrf_token", csrfToken, {
     httpOnly: false,
-    secure:   IS_PROD,
+    secure: IS_PROD,
     sameSite: IS_PROD ? "strict" : "lax",
-    maxAge:   8 * 60 * 60 * 1000,
+    maxAge: 8 * 60 * 60 * 1000,
   });
 }
 
 function clearAuthCookies(res) {
-  res.clearCookie("token",      { httpOnly: true,  secure: IS_PROD, sameSite: IS_PROD ? "strict" : "lax" });
+  res.clearCookie("token", { httpOnly: true, secure: IS_PROD, sameSite: IS_PROD ? "strict" : "lax" });
   res.clearCookie("csrf_token", { httpOnly: false, secure: IS_PROD, sameSite: IS_PROD ? "strict" : "lax" });
 }
 
@@ -55,7 +55,7 @@ router.post("/login", async (req, res, next) => {
     const csrfToken = uuidv4();
 
     const jwtToken = jwt.sign(
-      { id: user.id, employee_code: user.employee_code, role: user.role, csrf: csrfToken },
+      { id: user.id, employee_code: user.employee_code, role: user.role, department: user.department, csrf: csrfToken },
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN || "8h" }
     );
@@ -65,11 +65,11 @@ router.post("/login", async (req, res, next) => {
     // ไม่ส่ง token กลับใน body — ส่งแค่ข้อมูล user
     res.json({
       user: {
-        id:            user.id,
+        id: user.id,
         employee_code: user.employee_code,
-        full_name:     user.full_name,
-        department:    user.department,
-        role:          user.role,
+        full_name: user.full_name,
+        department: user.department,
+        role: user.role,
       },
     });
   } catch (err) {
