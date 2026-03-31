@@ -7,7 +7,7 @@ import { requireRole, logAudit } from "../middleware/audit.js";
 
 const router = Router();
 
-// ทุก route ใน superAdmin ต้อง authenticate + เป็น hr เท่านั้น
+// ทุก route ใน superAdmin ต้อง authenticate + เป็น super_admin เท่านั้น
 router.use(authenticate, requireRole("hr"));
 
 // ─────────────────────────────────────────────────────────────
@@ -15,7 +15,7 @@ router.use(authenticate, requireRole("hr"));
 // ─────────────────────────────────────────────────────────────
 
 /**
- * GET /api/super-admin/audit-logs
+ * GET /api/hr/audit-logs
  * query: action, actor_id, target_type, date_from, date_to, page, limit
  */
 router.get("/audit-logs", async (req, res, next) => {
@@ -86,7 +86,7 @@ router.get("/audit-logs", async (req, res, next) => {
 });
 
 /**
- * GET /api/super-admin/audit-logs/actions
+ * GET /api/hr/audit-logs/actions
  * คืน list ของ action ที่มีใน DB (สำหรับ filter dropdown)
  */
 router.get("/audit-logs/actions", async (req, res, next) => {
@@ -103,7 +103,7 @@ router.get("/audit-logs/actions", async (req, res, next) => {
 // ─────────────────────────────────────────────────────────────
 
 /**
- * GET /api/super-admin/users
+ * GET /api/hr/users
  * ดูรายชื่อ user ทุกคน รวม admin
  */
 router.get("/users", async (req, res, next) => {
@@ -131,7 +131,7 @@ router.get("/users", async (req, res, next) => {
 });
 
 /**
- * POST /api/super-admin/users
+ * POST /api/hr/users
  * สร้าง user / admin ใหม่
  */
 router.post("/users", csrfProtect, async (req, res, next) => {
@@ -141,7 +141,7 @@ router.post("/users", csrfProtect, async (req, res, next) => {
     if (!employee_code || !full_name || !password) {
       return res.status(400).json({ message: "กรุณากรอกข้อมูลให้ครบถ้วน" });
     }
-    const allowedRoles = ["user", "manager", "hr"];
+    const allowedRoles = ["user", "hr", "manager"];
     if (!allowedRoles.includes(role)) {
       return res.status(400).json({ message: "role ไม่ถูกต้อง" });
     }
@@ -174,13 +174,13 @@ router.post("/users", csrfProtect, async (req, res, next) => {
 });
 
 /**
- * PATCH /api/super-admin/users/:id/role
+ * PATCH /api/hr/users/:id/role
  * เปลี่ยน role (sensitive — log เสมอ)
  */
 router.patch("/users/:id/role", csrfProtect, async (req, res, next) => {
   try {
     const { role } = req.body;
-    const allowedRoles = ["user", "manager", "hr"];
+    const allowedRoles = ["user", "hr", "manager"];
     if (!allowedRoles.includes(role)) {
       return res.status(400).json({ message: "role ไม่ถูกต้อง" });
     }
@@ -214,7 +214,7 @@ router.patch("/users/:id/role", csrfProtect, async (req, res, next) => {
 });
 
 /**
- * DELETE /api/super-admin/users/:id
+ * DELETE /api/hr/users/:id
  * ลบ user (ไม่สามารถลบตัวเองได้)
  */
 router.delete("/users/:id", csrfProtect, async (req, res, next) => {
