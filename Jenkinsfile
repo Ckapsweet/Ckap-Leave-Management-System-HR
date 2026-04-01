@@ -29,7 +29,7 @@ pipeline {
             steps {
                 withCredentials([
                     usernamePassword(
-                        credentialsId: 'github-leave-backend',  // ✅ แก้ d ซ้ำ
+                        credentialsId: 'github-leave-backendd', 
                         usernameVariable: 'githubUser',
                         passwordVariable: 'githubPwd'
                     )
