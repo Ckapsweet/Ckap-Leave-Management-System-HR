@@ -2,6 +2,7 @@ pipeline {
     agent { label 'leave-backend' }
 
     triggers {
+        pollSCM('H/5 * * * *')
         githubPush()
     }
 
