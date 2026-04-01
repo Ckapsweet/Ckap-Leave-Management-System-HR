@@ -16,7 +16,7 @@ pipeline {
             steps {
                 withCredentials([
                     usernamePassword(
-                        credentialsId: 'github',
+                        credentialsId: 'github-leave-backendd',
                         usernameVariable: 'githubUser',
                         passwordVariable: 'githubPwd'
                     )
