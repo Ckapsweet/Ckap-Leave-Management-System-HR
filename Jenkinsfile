@@ -1,6 +1,10 @@
 pipeline {
     agent { label 'leave-backend' }
 
+    triggers {
+        githubPush()
+    }
+
     environment {
         SERVER_IP = '192.168.0.198'
         APP_DIR = '/home/adminis/backend'
