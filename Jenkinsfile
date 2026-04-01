@@ -11,25 +11,33 @@ pipeline {
     }
 
     stages {
+        stage('Check Branch') {
+            steps {
+                script {
+                    def branch = env.GIT_BRANCH?.replaceAll('origin/', '')
+                    if (branch != 'main') {
+                        currentBuild.result = 'ABORTED'
+                        error("⛔ Branch '${branch}' is not main — skipping deploy")
+                    }
+                    echo "✅ Branch is main — proceeding with deploy"
+                }
+            }
+        }
 
         stage('Clone Repository') {
             steps {
                 withCredentials([
                     usernamePassword(
-                        credentialsId: 'github-leave-backendd',
+                        credentialsId: 'github-leave-backend',  // ✅ แก้ d ซ้ำ
                         usernameVariable: 'githubUser',
                         passwordVariable: 'githubPwd'
                     )
                 ]) {
                     sh '''
                     cd /home/adminis
-
-                    # ลบของเก่าถ้ามี
                     if [ -d "backend" ]; then
                         rm -rf backend
                     fi
-
-                    # 🔥 clone แล้วตั้งชื่อเป็น backend
                     GIT_URL="https://${githubUser}:${githubPwd}@github.com/Ckapsweet/Ckap-Leave-Management-System-HR.git"
                     git clone $GIT_URL backend
                     '''
@@ -39,7 +47,7 @@ pipeline {
 
         stage('Install Packages Dependencies') {
             steps {
-                configFileProvider([configFile(fileId: 'ckap-backend-env', targetLocation: "${APP_DIR}/.env")]){
+                configFileProvider([configFile(fileId: 'ckap-backend-env', targetLocation: "${APP_DIR}/.env")]) {
                     sh '''
                     cd /home/adminis/backend
                     npm install
@@ -52,13 +60,9 @@ pipeline {
             steps {
                 sh '''
                 cd /home/adminis/backend
-
-                # หยุด app เดิม (ถ้ามี)
                 if pm2 list | grep -q 'app'; then
                     pm2 delete app
                 fi
-
-                # start ใหม่
                 pm2 start server.js --name app
                 pm2 save
                 '''
@@ -67,11 +71,14 @@ pipeline {
     }
 
     post {
+        always {
+            cleanWs()
+        }
         success {
-            echo "Deployment completed successfully!"
+            echo "✅ Deployment completed successfully! Build #${BUILD_NUMBER}"
         }
         failure {
-            echo "Deployment failed!"
+            echo "❌ Deployment failed! Build #${BUILD_NUMBER}"
         }
     }
 }
