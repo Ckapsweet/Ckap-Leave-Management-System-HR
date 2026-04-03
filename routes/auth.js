@@ -97,4 +97,34 @@ router.get("/me", authenticate, async (req, res, next) => {
   }
 });
 
+// ── POST /api/auth/change-password ────────────────────────────
+router.post("/change-password", authenticate, async (req, res, next) => {
+  try {
+    const { old_password, new_password } = req.body;
+    if (!old_password || !new_password) {
+      return res.status(400).json({ message: "กรุณากรอกรหัสผ่านเดิมและรหัสผ่านใหม่" });
+    }
+
+    const [rows] = await pool.query(
+      "SELECT * FROM users WHERE id = ? LIMIT 1",
+      [req.user.id]
+    );
+    const user = rows[0];
+    if (!user) return res.status(404).json({ message: "ไม่พบผู้ใช้งาน" });
+
+    const match = await bcrypt.compare(old_password, user.password);
+    if (!match) return res.status(400).json({ message: "รหัสผ่านเดิมไม่ถูกต้อง" });
+
+    const hashedPassword = await bcrypt.hash(new_password, 10);
+    await pool.query(
+      "UPDATE users SET password = ? WHERE id = ?",
+      [hashedPassword, req.user.id]
+    );
+
+    res.json({ message: "เปลี่ยนรหัสผ่านสำเร็จ" });
+  } catch (err) {
+    next(err);
+  }
+});
+
 export default router;
