@@ -266,6 +266,51 @@ FROM `audit_logs` al
 INNER JOIN `users` u ON u.`id` = al.`actor_id`
 ORDER BY al.`created_at` DESC;
 
+-- ────────────────────────────────────────────────────────────
+-- Table: ot_requests (For Overtime Management)
+-- ────────────────────────────────────────────────────────────
+
+CREATE TABLE `ot_requests` (
+  `id`            int(11)         NOT NULL AUTO_INCREMENT,
+  `user_id`       int(11)         NOT NULL,
+  `ot_date`       date            NOT NULL,
+  `start_time`    time            NOT NULL,
+  `end_time`      time            NOT NULL,
+  `total_hours`   decimal(5,2)    DEFAULT NULL,
+  `reason`        text            DEFAULT NULL,
+  `status`        enum('pending','approved','rejected') DEFAULT 'pending',
+  `approved_by`   int(11)         DEFAULT NULL,
+  `approved_at`   datetime        DEFAULT NULL,
+  `created_at`    timestamp       NOT NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`id`),
+  KEY `user_id`       (`user_id`),
+  KEY `approved_by`   (`approved_by`),
+  CONSTRAINT `ot_requests_ibfk_1` FOREIGN KEY (`user_id`)       REFERENCES `users` (`id`),
+  CONSTRAINT `ot_requests_ibfk_2` FOREIGN KEY (`approved_by`)   REFERENCES `users` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Sample data for ot_requests
+INSERT INTO `ot_requests` (`user_id`, `ot_date`, `start_time`, `end_time`, `total_hours`, `reason`, `status`) VALUES
+(3, '2025-04-10', '18:00:00', '21:00:00', 3.00, 'งานเร่งด่วนปิดงบประมาณ', 'pending');
+
+-- ────────────────────────────────────────────────────────────
+-- Table: ot_approvals
+-- ────────────────────────────────────────────────────────────
+
+CREATE TABLE `ot_approvals` (
+  `id`               int(11)  NOT NULL AUTO_INCREMENT,
+  `ot_request_id`    int(11)  DEFAULT NULL,
+  `approver_id`      int(11)  DEFAULT NULL,
+  `status`           enum('pending','approved','rejected') DEFAULT NULL,
+  `comment`          text     DEFAULT NULL,
+  `approved_at`      datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `ot_request_id` (`ot_request_id`),
+  KEY `approver_id`   (`approver_id`),
+  CONSTRAINT `ot_approvals_ibfk_1` FOREIGN KEY (`ot_request_id`) REFERENCES `ot_requests` (`id`),
+  CONSTRAINT `ot_approvals_ibfk_2` FOREIGN KEY (`approver_id`)   REFERENCES `users` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 COMMIT;
 
 /*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;

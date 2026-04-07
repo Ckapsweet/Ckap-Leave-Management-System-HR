@@ -327,4 +327,184 @@ router.patch("/leave-pool/:user_id", csrfProtect, async (req, res, next) => {
   } finally { conn.release(); }
 });
 
+// ── GET /api/admin/ot-requests ───────────────────────────────
+router.get("/ot-requests", async (req, res, next) => {
+  try {
+    const { status, user_id, year } = req.query;
+
+    const isManager = req.user.role === "manager";
+    const managerDept = req.user.department;
+
+    let sql = `
+      SELECT ot.*, u.full_name AS user_full_name, u.employee_code, u.department,
+             approver.full_name AS approver_name, ota.comment
+      FROM ot_requests ot
+      JOIN users u ON ot.user_id = u.id
+      LEFT JOIN users approver ON ot.approved_by = approver.id
+      LEFT JOIN ot_approvals ota ON ota.ot_request_id = ot.id
+      WHERE 1=1`;
+    const params = [];
+    if (isManager) { sql += " AND u.department = ?";        params.push(managerDept); }
+    if (status)    { sql += " AND ot.status = ?";           params.push(status); }
+    if (user_id)   { sql += " AND ot.user_id = ?";          params.push(user_id); }
+    if (year)      { sql += " AND YEAR(ot.ot_date) = ?";    params.push(year); }
+    sql += " ORDER BY ot.created_at DESC";
+
+    const [rows] = await pool.query(sql, params);
+    
+    const mapped = rows.map(r => {
+      let total_hours = null;
+      if (r.start_time && r.end_time) {
+        const [sh, sm] = r.start_time.split(":").map(Number);
+        const [eh, em] = r.end_time.split(":").map(Number);
+        total_hours = Math.round(((eh * 60 + em) - (sh * 60 + sm)) / 60 * 10) / 10;
+      }
+      return {
+        ...r,
+        total_hours: total_hours !== null ? total_hours : r.total_hours,
+        user: {
+          id:            r.user_id,
+          full_name:     r.user_full_name,
+          employee_code: r.employee_code,
+          department:    r.department,
+        }
+      };
+    });
+    
+    res.json(mapped);
+  } catch (err) { next(err); }
+});
+
+// ── PATCH /api/admin/ot-requests/:id/approve ──────────────────
+router.patch("/ot-requests/:id/approve", csrfProtect, async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const { comment = null } = req.body;
+    const requestId  = req.params.id;
+    const approverId = req.user.id;
+
+    const [rows] = await conn.query(
+      `SELECT ot.*, u.department AS user_dept
+       FROM ot_requests ot
+       JOIN users u ON ot.user_id = u.id
+       WHERE ot.id = ? LIMIT 1`,
+      [requestId]
+    );
+    if (!rows[0]) return res.status(404).json({ message: "ไม่พบคำขอ OT" });
+    if (!assertSameDept(req, res, rows[0].user_dept)) return;
+    if (rows[0].status !== "pending") {
+      return res.status(400).json({ message: "คำขอนี้ถูกดำเนินการไปแล้ว" });
+    }
+
+    const before = {
+      status:      rows[0].status,
+      approved_by: rows[0].approved_by,
+      approved_at: rows[0].approved_at,
+    };
+
+    await conn.beginTransaction();
+    const now = new Date();
+
+    await conn.query(
+      "UPDATE ot_requests SET status = 'approved', approved_by = ?, approved_at = ? WHERE id = ?",
+      [approverId, now, requestId]
+    );
+    await conn.query(
+      `INSERT INTO ot_approvals (ot_request_id, approver_id, status, comment, approved_at)
+       VALUES (?, ?, 'approved', ?, ?)
+       ON DUPLICATE KEY UPDATE status = 'approved', comment = ?, approved_at = ?`,
+      [requestId, approverId, comment, now, comment, now]
+    );
+
+    await conn.commit();
+
+    await logAudit({
+      req,
+      action:     "ot.approve",
+      targetType: "ot_request",
+      targetId:   Number(requestId),
+      before,
+      after: {
+        status:      "approved",
+        approved_by: approverId,
+        approved_at: now,
+        comment:     comment ?? null,
+      },
+      note: comment ?? null,
+      conn,
+    });
+
+    res.json({ message: "อนุมัติคำขอ OT เรียบร้อย" });
+  } catch (err) {
+    await conn.rollback();
+    next(err);
+  } finally { conn.release(); }
+});
+
+// ── PATCH /api/admin/ot-requests/:id/reject ───────────────────
+router.patch("/ot-requests/:id/reject", csrfProtect, async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const { comment = null } = req.body;
+    const requestId  = req.params.id;
+    const approverId = req.user.id;
+
+    const [rows] = await conn.query(
+      `SELECT ot.*, u.department AS user_dept
+       FROM ot_requests ot
+       JOIN users u ON ot.user_id = u.id
+       WHERE ot.id = ? LIMIT 1`,
+      [requestId]
+    );
+    if (!rows[0]) return res.status(404).json({ message: "ไม่พบคำขอ OT" });
+    if (!assertSameDept(req, res, rows[0].user_dept)) return;
+    if (rows[0].status !== "pending") {
+      return res.status(400).json({ message: "คำขอนี้ถูกดำเนินการไปแล้ว" });
+    }
+
+    const before = {
+      status:      rows[0].status,
+      approved_by: rows[0].approved_by,
+      approved_at: rows[0].approved_at,
+    };
+
+    await conn.beginTransaction();
+    const now = new Date();
+
+    await conn.query(
+      "UPDATE ot_requests SET status = 'rejected', approved_by = ?, approved_at = ? WHERE id = ?",
+      [approverId, now, requestId]
+    );
+    await conn.query(
+      `INSERT INTO ot_approvals (ot_request_id, approver_id, status, comment, approved_at)
+       VALUES (?, ?, 'rejected', ?, ?)
+       ON DUPLICATE KEY UPDATE status = 'rejected', comment = ?, approved_at = ?`,
+      [requestId, approverId, comment, now, comment, now]
+    );
+
+    await conn.commit();
+
+    await logAudit({
+      req,
+      action:     "ot.reject",
+      targetType: "ot_request",
+      targetId:   Number(requestId),
+      before,
+      after: {
+        status:      "rejected",
+        approved_by: approverId,
+        approved_at: now,
+        comment:     comment ?? null,
+      },
+      note: comment ?? null,
+      conn,
+    });
+
+    res.json({ message: "ปฏิเสธคำขอ OT เรียบร้อย" });
+  } catch (err) {
+    await conn.rollback();
+    next(err);
+  } finally { conn.release(); }
+});
+
 export default router;
