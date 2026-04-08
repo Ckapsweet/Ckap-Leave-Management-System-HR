@@ -42,7 +42,8 @@ function mapRow(r) {
  * @returns {boolean}       - true = ผ่าน, false = ส่ง 403 ไปแล้ว
  */
 function assertSameDept(req, res, dept) {
-  if (req.user.role === "manager" && req.user.department !== dept) {
+  const isManager = req.user.role === "manager" || req.user.role === "admin";
+  if (isManager && req.user.department !== dept) {
     res.status(403).json({ message: "ไม่มีสิทธิ์จัดการพนักงานนอกแผนกของคุณ" });
     return false;
   }
@@ -54,8 +55,8 @@ router.get("/leave-requests", async (req, res, next) => {
   try {
     const { status, user_id, year } = req.query;
 
-    // manager เห็นเฉพาะแผนกตัวเอง, hr เห็นทุกแผนก
-    const isManager = req.user.role === "manager";
+    // manager (admin in db) เห็นเฉพาะแผนกตัวเอง, hr/super_admin เห็นทุกแผนก
+    const isManager = req.user.role === "manager" || req.user.role === "admin";
     const managerDept = req.user.department;
 
     let sql = `
@@ -226,7 +227,7 @@ router.patch("/leave-requests/:id/reject", csrfProtect, async (req, res, next) =
 router.get("/users", async (req, res, next) => {
   try {
     // manager เห็นเฉพาะ user ในแผนกตัวเอง, hr เห็นทุกคน
-    const isManager = req.user.role === "manager";
+    const isManager = req.user.role === "manager" || req.user.role === "admin";
     const extra = isManager ? " WHERE department = ?" : "";
     const params = isManager ? [req.user.department] : [];
 
@@ -332,7 +333,7 @@ router.get("/ot-requests", async (req, res, next) => {
   try {
     const { status, user_id, year } = req.query;
 
-    const isManager = req.user.role === "manager";
+    const isManager = req.user.role === "manager" || req.user.role === "admin";
     const managerDept = req.user.department;
 
     let sql = `

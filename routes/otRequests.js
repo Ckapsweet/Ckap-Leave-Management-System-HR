@@ -54,7 +54,7 @@ router.get("/report/monthly", authenticate, async (req, res, next) => {
       [req.user.id, year]
     );
     const months = Array.from({ length: 12 }, (_, i) => ({
-      month:      i + 1,
+      month: i + 1,
       month_name: new Date(2000, i, 1).toLocaleString("th-TH", { month: "short" }),
       total_hours: 0,
       count: 0
@@ -116,7 +116,7 @@ router.post("/", authenticate, csrfProtect, async (req, res, next) => {
     const [sh, sm] = start_time.split(":").map(Number);
     const [eh, em] = end_time.split(":").map(Number);
     const total_hours = Math.round(((eh * 60 + em) - (sh * 60 + sm)) / 60 * 10) / 10;
-    
+
     if (total_hours <= 0) {
       return res.status(400).json({ message: "เวลาสิ้นสุดต้องมากกว่าเวลาเริ่มต้น" });
     }
@@ -146,12 +146,11 @@ router.post("/", authenticate, csrfProtect, async (req, res, next) => {
        FROM ot_requests ot
        LEFT JOIN users approver ON ot.approved_by = approver.id
        LEFT JOIN ot_approvals ota ON ota.ot_request_id = ot.id
-       WHERE ot.id = ?`, 
+       WHERE ot.id = ?`,
       [result.insertId]
     );
     const created = mapRow(rows[0]);
 
-    // ── audit log ─────────────────────────────────────────────
     await logAudit({
       req,
       action: "ot.create",
@@ -195,12 +194,12 @@ router.delete("/:id", authenticate, csrfProtect, async (req, res, next) => {
       targetType: "ot_request",
       targetId: rows[0].id,
       before: {
-        status:      rows[0].status,
-        ot_date:     rows[0].ot_date,
-        start_time:  rows[0].start_time,
-        end_time:    rows[0].end_time,
+        status: rows[0].status,
+        ot_date: rows[0].ot_date,
+        start_time: rows[0].start_time,
+        end_time: rows[0].end_time,
         total_hours: rows[0].total_hours,
-        reason:      rows[0].reason,
+        reason: rows[0].reason,
       },
     });
 

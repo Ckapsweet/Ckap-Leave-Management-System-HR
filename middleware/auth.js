@@ -17,8 +17,9 @@ export function authenticate(req, res, next) {
 // ── เช็ค role manager หรือสูงกว่า (hr) ──────────────────────
 // manager = approve/reject leave, hr = superadmin (จัดการ user ด้วย)
 export function requireAdmin(req, res, next) {
-  if (req.user?.role !== "manager") {
-    return res.status(403).json({ message: "Forbidden: manager only" });
+  const allowedRoles = ["manager", "admin", "hr", "super_admin"];
+  if (!allowedRoles.includes(req.user?.role)) {
+    return res.status(403).json({ message: "Forbidden: admin/manager/hr access only" });
   }
   next();
 }
