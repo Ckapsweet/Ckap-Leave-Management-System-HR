@@ -120,7 +120,7 @@ router.get("/users", async (req, res, next) => {
     }
 
     const [rows] = await pool.query(
-      `SELECT id, employee_code, full_name, department, role, created_at
+      `SELECT id, employee_code, full_name, department, role, supervisor_id, created_at
        FROM users
        WHERE ${where.join(" AND ")}
        ORDER BY created_at ASC`,
@@ -141,7 +141,7 @@ router.post("/users", csrfProtect, async (req, res, next) => {
     if (!employee_code || !full_name || !password) {
       return res.status(400).json({ message: "กรุณากรอกข้อมูลให้ครบถ้วน" });
     }
-    const allowedRoles = ["user", "hr", "manager"];
+    const allowedRoles = ["user", "lead", "hr", "manager"];
     if (!allowedRoles.includes(role)) {
       return res.status(400).json({ message: "role ไม่ถูกต้อง" });
     }
@@ -152,13 +152,14 @@ router.post("/users", csrfProtect, async (req, res, next) => {
     if (exist[0]) return res.status(409).json({ message: "employee_code ซ้ำ" });
 
     const hashed = await bcrypt.hash(password, 10);
+    const { supervisor_id = null } = req.body;
     const [result] = await pool.query(
-      `INSERT INTO users (employee_code, full_name, department, password, role)
-       VALUES (?, ?, ?, ?, ?)`,
-      [employee_code, full_name, department ?? null, hashed, role]
+      `INSERT INTO users (employee_code, full_name, department, password, role, supervisor_id)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [employee_code, full_name, department ?? null, hashed, role, supervisor_id]
     );
 
-    const newUser = { id: result.insertId, employee_code, full_name, department, role };
+    const newUser = { id: result.insertId, employee_code, full_name, department, role, supervisor_id };
 
     await logAudit({
       req,
@@ -180,7 +181,7 @@ router.post("/users", csrfProtect, async (req, res, next) => {
 router.patch("/users/:id/role", csrfProtect, async (req, res, next) => {
   try {
     const { role } = req.body;
-    const allowedRoles = ["user", "hr", "manager"];
+    const allowedRoles = ["user", "lead", "hr", "manager"];
     if (!allowedRoles.includes(role)) {
       return res.status(400).json({ message: "role ไม่ถูกต้อง" });
     }
@@ -210,6 +211,42 @@ router.patch("/users/:id/role", csrfProtect, async (req, res, next) => {
     });
 
     res.json({ message: "เปลี่ยน role เรียบร้อย", role });
+  } catch (err) { next(err); }
+});
+
+/**
+ * PATCH /api/hr/users/:id/supervisor
+ * เปลี่ยนหัวหน้า (supervisor_id)
+ */
+router.patch("/users/:id/supervisor", csrfProtect, async (req, res, next) => {
+  try {
+    const { supervisor_id } = req.body;
+    
+    const [userRows] = await pool.query(
+      "SELECT id, employee_code, full_name, supervisor_id FROM users WHERE id = ? LIMIT 1",
+      [req.params.id]
+    );
+    if (!userRows[0]) return res.status(404).json({ message: "ไม่พบผู้ใช้งาน" });
+
+    // ห้ามตั้งตัวเองเป็นหัวหน้าตัวเอง
+    if (supervisor_id && Number(supervisor_id) === Number(req.params.id)) {
+      return res.status(400).json({ message: "ไม่สามารถตั้งตัวเองเป็นหัวหน้าได้" });
+    }
+
+    const before = { supervisor_id: userRows[0].supervisor_id };
+    await pool.query("UPDATE users SET supervisor_id = ? WHERE id = ?", [supervisor_id || null, req.params.id]);
+
+    await logAudit({
+      req,
+      action: "user.update",
+      targetType: "user",
+      targetId: userRows[0].id,
+      before,
+      after: { supervisor_id },
+      note: `${userRows[0].employee_code} เปลี่ยนหัวหน้า: ${before.supervisor_id} → ${supervisor_id}`,
+    });
+
+    res.json({ message: "เปลี่ยนหัวหน้าเรียบร้อย", supervisor_id });
   } catch (err) { next(err); }
 });
 

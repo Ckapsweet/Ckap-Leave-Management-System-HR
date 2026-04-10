@@ -30,15 +30,17 @@ CREATE TABLE `users` (
   `full_name`     varchar(255) DEFAULT NULL,
   `department`    varchar(255) DEFAULT NULL,
   `password`      varchar(255) DEFAULT NULL,
-  `role`          enum('user','hr','admin','super_admin') NOT NULL DEFAULT 'user',
+  `role`          enum('user','lead','manager') NOT NULL DEFAULT 'user',
+  `supervisor_id` int(11)      DEFAULT NULL,
   `created_at`    timestamp    NOT NULL DEFAULT current_timestamp(),
-  PRIMARY KEY (`id`)
+  PRIMARY KEY (`id`),
+  CONSTRAINT `fk_user_supervisor` FOREIGN KEY (`supervisor_id`) REFERENCES `users` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 INSERT INTO `users` (`id`, `employee_code`, `full_name`, `department`, `password`, `role`, `created_at`) VALUES
-(1,  'EMP-0001', 'วิไล สุวรรณภูมิ',   'ทรัพยากรบุคคล',       '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'super_admin', '2024-01-10 08:00:00'),
-(2,  'EMP-0002', 'ประเสริฐ มีสุข',      'วิศวกรรมซอฟต์แวร์',   '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'admin',       '2024-01-10 08:05:00'),
-(3,  'EMP-0003', 'ธนพล วิชัยดิษฐ',     'วิศวกรรมซอฟต์แวร์',   '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-15 09:00:00'),
+(1,  'EMP-0001', 'วิไล สุวรรณภูมิ',   'ทรัพยากรบุคคล',       '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'manager', '2024-01-10 08:00:00'),
+(2,  'EMP-0002', 'ประเสริฐ มีสุข',      'วิศวกรรมซอฟต์แวร์',   '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'lead',       '2024-01-10 08:05:00'),
+(3,  'EMP-0003', 'ธนพล วิชัยดิษฐ',     'วิศวกรรมซอฟต์แวร์',   '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'lead',        '2024-01-15 09:00:00'),
 (4,  'EMP-0004', 'สมหญิง ดวงดี',        'การตลาด',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-15 09:10:00'),
 (5,  'EMP-0005', 'กิตติพงษ์ รุ่งเรือง', 'การเงิน',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-16 09:00:00'),
 (6,  'EMP-0006', 'พรทิพย์ แสงจันทร์',   'การตลาด',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-16 09:15:00'),

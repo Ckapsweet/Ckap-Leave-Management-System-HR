@@ -25,6 +25,8 @@ function mapRow(r) {
       full_name:     r.user_full_name,
       employee_code: r.employee_code,
       department:    r.department,
+      role:          r.user_role,
+      supervisor_id: r.supervisor_id,
     },
     leave_type: {
       id:       r.leave_type_id,
@@ -60,7 +62,7 @@ router.get("/leave-requests", async (req, res, next) => {
     const managerDept = req.user.department;
 
     let sql = `
-      SELECT lr.*, u.full_name AS user_full_name, u.employee_code, u.department,
+      SELECT lr.*, u.full_name AS user_full_name, u.employee_code, u.department, u.role AS user_role, u.supervisor_id,
              lt.name AS leave_type_name, lt.max_days AS leave_type_max_days,
              approver.full_name AS approver_name, la.comment
       FROM leave_requests lr
@@ -70,7 +72,19 @@ router.get("/leave-requests", async (req, res, next) => {
       LEFT JOIN leave_approvals la ON la.leave_request_id = lr.id
       WHERE 1=1`;
     const params = [];
-    if (isManager) { sql += " AND u.department = ?";        params.push(managerDept); }
+    if (isManager) {
+      if (req.user.role === "lead") {
+        // Lead เห็นเฉพาะคนที่ดูแล
+        sql += " AND u.supervisor_id = ?";
+        params.push(req.user.id);
+      } else if (req.user.role === "manager") {
+        // Manager เห็นเฉพาะ Lead (ตามโจทย์)
+        sql += " AND u.role = 'lead'";
+      } else {
+         // hr/super_admin ที่ติด requireAdmin (แต่ไม่ได้ระบุ lead/manager)
+         // อาจจะไม่ต้องกรอง หรือถ้ามี admin role อื่นๆ
+      }
+    }
     if (status)    { sql += " AND lr.status = ?";           params.push(status); }
     if (user_id)   { sql += " AND lr.user_id = ?";          params.push(user_id); }
     if (year)      { sql += " AND YEAR(lr.start_date) = ?"; params.push(year); }
@@ -232,7 +246,7 @@ router.get("/users", async (req, res, next) => {
     const params = isManager ? [req.user.department] : [];
 
     const [rows] = await pool.query(
-      `SELECT id, employee_code, full_name, department, role, created_at FROM users${extra} ORDER BY id ASC`,
+      `SELECT id, employee_code, full_name, department, role, supervisor_id, created_at FROM users${extra} ORDER BY id ASC`,
       params
     );
     res.json(rows);
