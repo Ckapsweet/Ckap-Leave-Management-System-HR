@@ -30,7 +30,7 @@ CREATE TABLE `users` (
   `full_name`     varchar(255) DEFAULT NULL,
   `department`    varchar(255) DEFAULT NULL,
   `password`      varchar(255) DEFAULT NULL,
-  `role`          enum('user','lead','manager') NOT NULL DEFAULT 'user',
+  `role`          enum('user','lead','assistant manager','manager') NOT NULL DEFAULT 'user',
   `supervisor_id` int(11)      DEFAULT NULL,
   `created_at`    timestamp    NOT NULL DEFAULT current_timestamp(),
   PRIMARY KEY (`id`),
@@ -38,18 +38,16 @@ CREATE TABLE `users` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 INSERT INTO `users` (`id`, `employee_code`, `full_name`, `department`, `password`, `role`, `created_at`) VALUES
-(1,  'EMP-0001', 'วิไล สุวรรณภูมิ',   'ทรัพยากรบุคคล',       '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'manager', '2024-01-10 08:00:00'),
-(2,  'EMP-0002', 'ประเสริฐ มีสุข',      'วิศวกรรมซอฟต์แวร์',   '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'lead',       '2024-01-10 08:05:00'),
-(3,  'EMP-0003', 'ธนพล วิชัยดิษฐ',     'วิศวกรรมซอฟต์แวร์',   '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'lead',        '2024-01-15 09:00:00'),
-(4,  'EMP-0004', 'สมหญิง ดวงดี',        'การตลาด',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-15 09:10:00'),
-(5,  'EMP-0005', 'กิตติพงษ์ รุ่งเรือง', 'การเงิน',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-16 09:00:00'),
-(6,  'EMP-0006', 'พรทิพย์ แสงจันทร์',   'การตลาด',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-16 09:15:00'),
-(7,  'EMP-0007', 'นัทธพงศ์ ทองดี',      'ปฏิบัติการ',           '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-17 09:00:00'),
-(8,  'EMP-0008', 'อรุณี ใจงาม',         'วิศวกรรมซอฟต์แวร์',   '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-17 09:20:00'),
-(9,  'EMP-0009', 'ภูวนาถ ศรีสมบูรณ์',   'ปฏิบัติการ',           '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-18 09:00:00'),
-(10, 'EMP-0010', 'มณีรัตน์ พงษ์ไพร',    'การเงิน',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-18 09:30:00'),
-(11, 'EMP001',   'Test User',            NULL,                    '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2026-03-19 09:08:04'),
-(12, 'HR001',    'HR User',              NULL,                    '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'hr',          '2026-03-19 09:08:04');
+(1,  'EMP-0001', 'นางสาวปวิดา  กาญจนางกูล',   'การตลาด',       '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'manager', '2024-01-10 08:00:00'),
+(2,  'EMP-0002', 'นางสาวภัทรา  พงษ์การุณ',      'การตลาด',   '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'assistant manager',       '2024-01-10 08:05:00'),
+(3,  'EMP-0003', 'นายพูนศักดิ์  วงศ์มกรพันธ์',     'การตลาด',   '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'lead',        '2024-01-15 09:00:00'),
+(4,  'EMP-0004', 'นางสาวอนงค์กานต์  เหียดใส',        'การตลาด',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-15 09:10:00'),
+(5,  'EMP-0005', 'นางสาวพรปวีณ์  เทพวิจิตร์', 'การตลาด',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-16 09:00:00'),
+(6,  'EMP-0006', 'นางสาวนพวรรณ  ศรีเสริม',   'การตลาด',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-16 09:15:00'),
+(7,  'EMP-0007', 'นางสาวสุภาภรณ์  จ้อยวงศ์',      'การตลาด',           '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-17 09:00:00'),
+(8,  'EMP-0008', 'นางสาวรวิวรรณ  อนุตรี',         'การตลาด',   '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-17 09:20:00'),
+(9,  'EMP-0009', 'นางสาวจันทรรัตน์  อดิศรวรกิจ',   'การตลาด',           '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-18 09:00:00'),
+(10, 'EMP-0010', 'นางสาวอาจรีย์  ทุ่งราช',    'การตลาด',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-18 09:30:00');
 
 ALTER TABLE `users` MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=13;
 
@@ -133,7 +131,7 @@ CREATE TABLE `leave_approvals` (
   CONSTRAINT `leave_approvals_ibfk_2` FOREIGN KEY (`approver_id`)      REFERENCES `users` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- approver_id เปลี่ยนเป็น 2 (ประเสริฐ — admin) เพราะ id=1 เป็น super_admin แล้ว
+-- approver_id เปลี่ยนเป็น 2 (ประเสริฐ — manager) เพราะ id=1 เป็น super_admin(หรือ manager หลัก) แล้ว
 INSERT INTO `leave_approvals` (`id`, `leave_request_id`, `approver_id`, `status`, `comment`, `approved_at`) VALUES
 (1, 1, 2, 'approved', 'อนุมัติ ดูแลสุขภาพด้วยนะ',       '2025-01-14 09:00:00'),
 (2, 2, 2, 'approved', NULL,                               '2025-01-07 09:00:00'),
@@ -234,7 +232,7 @@ CREATE TABLE `audit_logs` (
 INSERT INTO `audit_logs` (`actor_id`, `actor_role`, `action`, `target_type`, `target_id`, `after_data`, `note`, `created_at`)
 SELECT
   la.`approver_id`,
-  'admin',
+  'manager',
   CASE la.`status` WHEN 'approved' THEN 'leave.approve' ELSE 'leave.reject' END,
   'leave_request',
   la.`leave_request_id`,
@@ -245,7 +243,7 @@ FROM `leave_approvals` la
 WHERE la.`approved_at` IS NOT NULL;
 
 -- ────────────────────────────────────────────────────────────
--- View: v_audit_logs  (super_admin ใช้ query)
+-- View: v_audit_logs  (manager ใช้ query)
 -- ────────────────────────────────────────────────────────────
 
 CREATE OR REPLACE VIEW `v_audit_logs` AS

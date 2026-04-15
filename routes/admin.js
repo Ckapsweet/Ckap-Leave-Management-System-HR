@@ -44,8 +44,8 @@ function mapRow(r) {
  * @returns {boolean}       - true = ผ่าน, false = ส่ง 403 ไปแล้ว
  */
 function assertSameDept(req, res, dept) {
-  const isManager = req.user.role === "manager" || req.user.role === "admin";
-  if (isManager && req.user.department !== dept) {
+  const isDeptAdmin = req.user.role === "assistant manager";
+  if (isDeptAdmin && req.user.department !== dept) {
     res.status(403).json({ message: "ไม่มีสิทธิ์จัดการพนักงานนอกแผนกของคุณ" });
     return false;
   }
@@ -54,7 +54,7 @@ function assertSameDept(req, res, dept) {
 
 /**
  * assertIsSubordinate — ตรวจว่า supervisor (lead/manager) เป็น supervisor ของ userId นั้น
- * ใช้ได้ทั้ง lead ⇒ user และ manager ⇒ lead
+ * ใช้ได้ทั้ง lead ⇒ user และ assistant manager ⇒ lead
  * @param {object} conn          - DB connection
  * @param {number} supervisorId  - id ของ lead/manager
  * @param {number} userId        - id ของพนักงาน/lead ที่ต้องการดำเนินการ
@@ -90,16 +90,12 @@ router.get("/leave-requests", async (req, res, next) => {
       WHERE 1=1`;
     const params = [];
 
-    if (req.user.role === "lead") {
-      // Lead เห็นเฉพาะคำขอของลูกน้องที่ตนดูแล (supervisor_id = lead.id)
+    if (["lead", "assistant manager", "manager"].includes(req.user.role)) {
+      // เห็นเฉพาะคำขอของคนที่ตนเองดูแล (supervisor_id ของเขา = ของเรา)
       sql += " AND u.supervisor_id = ?";
       params.push(req.user.id);
-    } else if (req.user.role === "manager") {
-      // Manager เห็นเฉพาะคำขอของ lead ที่ตนบริหาร (supervisor_id = manager.id)
-      sql += " AND u.supervisor_id = ? AND u.role = 'lead'";
-      params.push(req.user.id);
     }
-    // hr, super_admin เห็นทุกแผนก admin/manager ทั่วไป
+
 
     if (status)  { sql += " AND lr.status = ?";           params.push(status); }
     if (user_id) { sql += " AND lr.user_id = ?";          params.push(user_id); }
@@ -128,8 +124,8 @@ router.patch("/leave-requests/:id/approve", csrfProtect, async (req, res, next) 
     );
     if (!rows[0]) return res.status(404).json({ message: "ไม่พบคำขอลา" });
     if (!assertSameDept(req, res, rows[0].user_dept)) return;   // ← guard
-    // Lead: อนุมัติได้เฉพาะลูกน้องของตนเอง
-    if (req.user.role === "lead" || req.user.role === "manager") {
+    // ตรวจสอบสิทธิ์ว่าอนุมัติได้เฉพาะลูกน้องของตนเอง
+    if (["lead", "assistant manager", "manager"].includes(req.user.role)) {
       if (!(await assertIsSubordinate(conn, approverId, rows[0].user_id, res))) return;
     }
     if (rows[0].status !== "pending") {
@@ -207,8 +203,8 @@ router.patch("/leave-requests/:id/reject", csrfProtect, async (req, res, next) =
     );
     if (!rows[0]) return res.status(404).json({ message: "ไม่พบคำขอลา" });
     if (!assertSameDept(req, res, rows[0].user_dept)) return;   // ← guard
-    // Lead/Manager: ปฏิเสธได้เฉพาะลูกน้องของตนเอง
-    if (req.user.role === "lead" || req.user.role === "manager") {
+    // ตรวจสอบสิทธิ์ว่าปฏิเสธได้เฉพาะลูกน้องของตนเอง
+    if (["lead", "assistant manager", "manager"].includes(req.user.role)) {
       if (!(await assertIsSubordinate(conn, approverId, rows[0].user_id, res))) return;
     }
     if (rows[0].status !== "pending") {
@@ -271,12 +267,12 @@ router.get("/users", async (req, res, next) => {
       // Lead เห็นเฉพาะ role='user' ยกเว้นตัวเอง (เพื่อเลือกลูกน้องได้)
       sql += " WHERE id != ? AND role = 'user'";
       params.push(req.user.id);
-    } else if (req.user.role === "manager") {
-      // Manager เห็นเฉพาะ role='lead' ยกเว้นตัวเอง (เพื่อเลือก lead เป็นลูกน้องได้)
+    } else if (req.user.role === "assistant manager") {
+      // assistant manager เห็นเฉพาะ role='lead' ยกเว้นตัวเอง (เพื่อเลือก lead เป็นลูกน้องได้)
       sql += " WHERE id != ? AND role = 'lead'";
       params.push(req.user.id);
     }
-    // hr, super_admin เห็นทุกคน
+    // manager เห็นทุกคน
     sql += " ORDER BY id ASC";
 
     const [rows] = await pool.query(sql, params);
@@ -286,12 +282,12 @@ router.get("/users", async (req, res, next) => {
 
 // ── PATCH /api/admin/users/:id/assign-subordinate ─────────────
 // Lead กำหนด/ยกเลิกลูกน้อง role='user'
-// Manager กำหนด/ยกเลิกลูกน้อง role='lead'
+// assistant manager กำหนด/ยกเลิกลูกน้อง role='lead'
 router.patch("/users/:id/assign-subordinate", csrfProtect, async (req, res, next) => {
   try {
     const { role: callerRole, id: callerId } = req.user;
-    if (callerRole !== "lead" && callerRole !== "manager") {
-      return res.status(403).json({ message: "เฉพาะ lead หรือ manager เท่านั้นที่ใช้งาน endpoint นี้ได้" });
+    if (callerRole !== "lead" && callerRole !== "assistant manager" && callerRole !== "manager") {
+      return res.status(403).json({ message: "เฉพาะ lead, assistant manager หรือ manager เท่านั้นที่ใช้งาน endpoint นี้ได้" });
     }
 
     const userId   = Number(req.params.id);
@@ -307,11 +303,15 @@ router.patch("/users/:id/assign-subordinate", csrfProtect, async (req, res, next
     );
     if (!target[0]) return res.status(404).json({ message: "ไม่พบผู้ใช้งาน" });
 
-    // ตรวจ role ที่อนุญาต: lead คุมได้เฉพาะ 'user', manager คุมได้เฉพาะ 'lead'
-    const allowedSubRole = callerRole === "lead" ? "user" : "lead";
-    if (target[0].role !== allowedSubRole) {
+    // ตรวจ role ที่อนุญาต: lead คุมได้เฉพาะ 'user', assistant manager คุมได้เฉพาะ 'lead'
+    let allowedSubRoles = [];
+    if (callerRole === "lead") allowedSubRoles = ["user"];
+    else if (callerRole === "assistant manager") allowedSubRoles = ["lead"];
+    else allowedSubRoles = ["assistant manager", "lead", "user"];
+
+    if (!allowedSubRoles.includes(target[0].role)) {
       return res.status(400).json({
-        message: `${callerRole} สามารถกำหนดลูกน้องได้เฉพาะ role '${allowedSubRole}' เท่านั้น`,
+        message: `${callerRole} สามารถกำหนดลูกน้องได้เฉพาะ role '${allowedSubRoles.join(", ")}' เท่านั้น`,
       });
     }
 
@@ -337,8 +337,8 @@ router.patch("/users/:id/assign-subordinate", csrfProtect, async (req, res, next
       targetId:   userId,
       after:      { supervisor_id: newSupervisor, full_name: target[0].full_name },
       note:       assign
-        ? `${callerRole} ${callerId} กำหนด ${allowedSubRole} ${userId} เป็นลูกน้อง`
-        : `${callerRole} ${callerId} ยกเลิก ${allowedSubRole} ${userId} จากลูกน้อง`,
+        ? `${callerRole} ${callerId} กำหนด ${target[0].role} ${userId} เป็นลูกน้อง`
+        : `${callerRole} ${callerId} ยกเลิก ${target[0].role} ${userId} จากลูกน้อง`,
     });
 
     res.json({
@@ -443,7 +443,7 @@ router.get("/ot-requests", async (req, res, next) => {
   try {
     const { status, user_id, year } = req.query;
 
-    const isManager = req.user.role === "manager" || req.user.role === "admin";
+    const isDeptAdmin = req.user.role === "assistant manager";
     const managerDept = req.user.department;
 
     let sql = `
@@ -455,7 +455,11 @@ router.get("/ot-requests", async (req, res, next) => {
       LEFT JOIN ot_approvals ota ON ota.ot_request_id = ot.id
       WHERE 1=1`;
     const params = [];
-    if (isManager) { sql += " AND u.department = ?";        params.push(managerDept); }
+    if (["lead", "assistant manager", "manager"].includes(req.user.role)) {
+      sql += " AND u.supervisor_id = ?";
+      params.push(req.user.id);
+    }
+
     if (status)    { sql += " AND ot.status = ?";           params.push(status); }
     if (user_id)   { sql += " AND ot.user_id = ?";          params.push(user_id); }
     if (year)      { sql += " AND YEAR(ot.ot_date) = ?";    params.push(year); }
