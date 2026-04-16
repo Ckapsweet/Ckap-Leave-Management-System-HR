@@ -38,18 +38,24 @@ CREATE TABLE `users` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 INSERT INTO `users` (`id`, `employee_code`, `full_name`, `department`, `password`, `role`, `created_at`) VALUES
-(1,  'EMP-0001', 'นางสาวปวิดา  กาญจนางกูล',   'การตลาด',       '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'manager', '2024-01-10 08:00:00'),
-(2,  'EMP-0002', 'นางสาวภัทรา  พงษ์การุณ',      'การตลาด',   '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'assistant manager',       '2024-01-10 08:05:00'),
-(3,  'EMP-0003', 'นายพูนศักดิ์  วงศ์มกรพันธ์',     'การตลาด',   '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'lead',        '2024-01-15 09:00:00'),
-(4,  'EMP-0004', 'นางสาวอนงค์กานต์  เหียดใส',        'การตลาด',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-15 09:10:00'),
-(5,  'EMP-0005', 'นางสาวพรปวีณ์  เทพวิจิตร์', 'การตลาด',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-16 09:00:00'),
-(6,  'EMP-0006', 'นางสาวนพวรรณ  ศรีเสริม',   'การตลาด',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-16 09:15:00'),
-(7,  'EMP-0007', 'นางสาวสุภาภรณ์  จ้อยวงศ์',      'การตลาด',           '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-17 09:00:00'),
-(8,  'EMP-0008', 'นางสาวรวิวรรณ  อนุตรี',         'การตลาด',   '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-17 09:20:00'),
-(9,  'EMP-0009', 'นางสาวจันทรรัตน์  อดิศรวรกิจ',   'การตลาด',           '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-18 09:00:00'),
-(10, 'EMP-0010', 'นางสาวอาจรีย์  ทุ่งราช',    'การตลาด',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-18 09:30:00');
+(1,  'MKT-0001', 'นางสาวปวิดา  กาญจนางกูล',   'การตลาด',       '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'manager', '2024-01-10 08:00:00'),
+(2,  'MKT-0002', 'นางสาวภัทรา  พงษ์การุณ',      'การตลาด',   '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'assistant manager',       '2024-01-10 08:05:00'),
+(3,  'MKT-0003', 'นายพูนศักดิ์  วงศ์มกรพันธ์',     'การตลาด',   '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'lead',        '2024-01-15 09:00:00'),
+(4,  'MKT-0004', 'นางสาวอนงค์กานต์  เหียดใส',        'การตลาด',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-15 09:10:00'),
+(5,  'MKT-0005', 'นางสาวพรปวีณ์  เทพวิจิตร์', 'การตลาด',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-16 09:00:00'),
+(6,  'MKT-0006', 'นางสาวนพวรรณ  ศรีเสริม',   'การตลาด',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-16 09:15:00'),
+(7,  'MKT-0007', 'นางสาวสุภาภรณ์  จ้อยวงศ์',      'การตลาด',           '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-17 09:00:00'),
+(8,  'MKT-0008', 'นางสาวรวิวรรณ  อนุตรี',         'การตลาด',   '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-17 09:20:00'),
+(9,  'MKT-0009', 'นางสาวจันทรรัตน์  อดิศรวรกิจ',   'การตลาด',           '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-18 09:00:00'),
+(10, 'MKT-0010', 'นางสาวอาจรีย์  ทุ่งราช',    'การตลาด',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-18 09:30:00'),
+(11, 'MKT-0011', 'นางสาวพุทธพร  พัดจีบ',    'การตลาด',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-18 09:30:00'),
+(12, 'MKT-0012', 'นางสาวนัชนก  ไชยแป้น',    'การตลาด',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-18 09:30:00'),
+(13, 'MKT-0013', 'นางสาวปานไพลิน  ปินใจ',    'การตลาด',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-18 09:30:00'),
+(14, 'MKT-0014', 'นางสาวธิษณา  ธัญญวิชยเวช',    'การตลาด',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-18 09:30:00'),
+(15, 'MKT-0015', 'นายวินัย  ลูกปัด',    'การตลาด',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-18 09:30:00'),
+(16, 'MKT-0016', 'นายชยพล  อุ่มเจริญ',    'การตลาด',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-18 09:30:00');
 
-ALTER TABLE `users` MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=13;
+ALTER TABLE `users` MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=17;
 
 -- ────────────────────────────────────────────────────────────
 -- Table: leave_types

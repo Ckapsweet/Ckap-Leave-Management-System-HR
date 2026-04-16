@@ -8,7 +8,7 @@ import { requireRole, logAudit } from "../middleware/audit.js";
 const router = Router();
 
 // ทุก route ใน superAdmin ต้อง authenticate + เป็น manager เท่านั้น
-router.use(authenticate, requireRole("manager"));
+router.use(authenticate, requireRole("manager", "assistant manager"));
 
 // ─────────────────────────────────────────────────────────────
 // AUDIT LOGS
