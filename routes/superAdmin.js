@@ -197,6 +197,15 @@ router.patch("/users/:id/role", csrfProtect, async (req, res, next) => {
       return res.status(400).json({ message: "ไม่สามารถเปลี่ยน role ของตัวเองได้" });
     }
 
+    if (req.user.role === "assistant manager") {
+      if (["manager", "assistant manager", "hr"].includes(rows[0].role)) {
+        return res.status(403).json({ message: "คุณไม่มีสิทธิ์แก้ไข role ของพนักงานระดับบริหารหรือ HR ได้" });
+      }
+      if (!["lead", "user"].includes(role)) {
+        return res.status(403).json({ message: "Assistant Manager สามารถกำหนดสิทธิ์ได้เฉพาะ lead และ user เท่านั้น" });
+      }
+    }
+
     const before = { role: rows[0].role };
     await pool.query("UPDATE users SET role = ? WHERE id = ?", [role, req.params.id]);
 

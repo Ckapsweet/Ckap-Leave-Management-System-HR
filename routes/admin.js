@@ -18,19 +18,19 @@ function mapRow(r) {
   }
   return {
     ...r,
-    leave_unit:  isHour ? "hour" : "day",
+    leave_unit: isHour ? "hour" : "day",
     total_hours,
     user: {
-      id:            r.user_id,
-      full_name:     r.user_full_name,
+      id: r.user_id,
+      full_name: r.user_full_name,
       employee_code: r.employee_code,
-      department:    r.department,
-      role:          r.user_role,
+      department: r.department,
+      role: r.user_role,
       supervisor_id: r.supervisor_id,
     },
     leave_type: {
-      id:       r.leave_type_id,
-      name:     r.leave_type_name,
+      id: r.leave_type_id,
+      name: r.leave_type_name,
       max_days: r.leave_type_max_days,
     },
   };
@@ -90,16 +90,16 @@ router.get("/leave-requests", async (req, res, next) => {
       WHERE 1=1`;
     const params = [];
 
-    if (["lead", "assistant manager", "manager"].includes(req.user.role)) {
+    if (["lead", "assistant manager"].includes(req.user.role)) {
       // เห็นเฉพาะคำขอของคนที่ตนเองดูแล (supervisor_id ของเขา = ของเรา)
       sql += " AND u.supervisor_id = ?";
       params.push(req.user.id);
     }
 
 
-    if (status)  { sql += " AND lr.status = ?";           params.push(status); }
-    if (user_id) { sql += " AND lr.user_id = ?";          params.push(user_id); }
-    if (year)    { sql += " AND YEAR(lr.start_date) = ?"; params.push(year); }
+    if (status) { sql += " AND lr.status = ?"; params.push(status); }
+    if (user_id) { sql += " AND lr.user_id = ?"; params.push(user_id); }
+    if (year) { sql += " AND YEAR(lr.start_date) = ?"; params.push(year); }
     sql += " ORDER BY lr.created_at DESC";
 
     const [rows] = await pool.query(sql, params);
@@ -112,7 +112,7 @@ router.patch("/leave-requests/:id/approve", csrfProtect, async (req, res, next) 
   const conn = await pool.getConnection();
   try {
     const { comment = null } = req.body;
-    const requestId  = req.params.id;
+    const requestId = req.params.id;
     const approverId = req.user.id;
 
     const [rows] = await conn.query(
@@ -133,7 +133,7 @@ router.patch("/leave-requests/:id/approve", csrfProtect, async (req, res, next) 
     }
 
     const before = {
-      status:     rows[0].status,
+      status: rows[0].status,
       approved_by: rows[0].approved_by,
       approved_at: rows[0].approved_at,
     };
@@ -165,15 +165,15 @@ router.patch("/leave-requests/:id/approve", csrfProtect, async (req, res, next) 
     // ── audit log ─────────────────────────────────────────────
     await logAudit({
       req,
-      action:     "leave.approve",
+      action: "leave.approve",
       targetType: "leave_request",
-      targetId:   Number(requestId),
+      targetId: Number(requestId),
       before,
       after: {
-        status:      "approved",
+        status: "approved",
         approved_by: approverId,
         approved_at: now,
-        comment:     comment ?? null,
+        comment: comment ?? null,
       },
       note: comment ?? null,
       conn,
@@ -191,7 +191,7 @@ router.patch("/leave-requests/:id/reject", csrfProtect, async (req, res, next) =
   const conn = await pool.getConnection();
   try {
     const { comment = null } = req.body;
-    const requestId  = req.params.id;
+    const requestId = req.params.id;
     const approverId = req.user.id;
 
     const [rows] = await conn.query(
@@ -212,7 +212,7 @@ router.patch("/leave-requests/:id/reject", csrfProtect, async (req, res, next) =
     }
 
     const before = {
-      status:      rows[0].status,
+      status: rows[0].status,
       approved_by: rows[0].approved_by,
       approved_at: rows[0].approved_at,
     };
@@ -236,15 +236,15 @@ router.patch("/leave-requests/:id/reject", csrfProtect, async (req, res, next) =
     // ── audit log ─────────────────────────────────────────────
     await logAudit({
       req,
-      action:     "leave.reject",
+      action: "leave.reject",
       targetType: "leave_request",
-      targetId:   Number(requestId),
+      targetId: Number(requestId),
       before,
       after: {
-        status:      "rejected",
+        status: "rejected",
         approved_by: approverId,
         approved_at: now,
-        comment:     comment ?? null,
+        comment: comment ?? null,
       },
       note: comment ?? null,
       conn,
@@ -290,7 +290,7 @@ router.patch("/users/:id/assign-subordinate", csrfProtect, async (req, res, next
       return res.status(403).json({ message: "เฉพาะ lead, assistant manager หรือ manager เท่านั้นที่ใช้งาน endpoint นี้ได้" });
     }
 
-    const userId   = Number(req.params.id);
+    const userId = Number(req.params.id);
     const { assign } = req.body; // true = เพิ่มเป็นลูกน้อง, false = ยกเลิก
 
     if (userId === callerId) {
@@ -332,11 +332,11 @@ router.patch("/users/:id/assign-subordinate", csrfProtect, async (req, res, next
 
     await logAudit({
       req,
-      action:     assign ? `${callerRole}.assign_subordinate` : `${callerRole}.unassign_subordinate`,
+      action: assign ? `${callerRole}.assign_subordinate` : `${callerRole}.unassign_subordinate`,
       targetType: "user",
-      targetId:   userId,
-      after:      { supervisor_id: newSupervisor, full_name: target[0].full_name },
-      note:       assign
+      targetId: userId,
+      after: { supervisor_id: newSupervisor, full_name: target[0].full_name },
+      note: assign
         ? `${callerRole} ${callerId} กำหนด ${target[0].role} ${userId} เป็นลูกน้อง`
         : `${callerRole} ${callerId} ยกเลิก ${target[0].role} ${userId} จากลูกน้อง`,
     });
@@ -402,8 +402,8 @@ router.patch("/leave-pool/:user_id", csrfProtect, async (req, res, next) => {
       "SELECT total_days, used_days FROM user_leave_pool WHERE user_id = ? AND year = ? LIMIT 1",
       [userId, year]
     );
-    const before     = existing[0] ?? null;
-    const used_days  = before?.used_days ?? 0;
+    const before = existing[0] ?? null;
+    const used_days = before?.used_days ?? 0;
     const total_days = parseFloat(remaining_days) + parseFloat(used_days);
 
     await conn.beginTransaction();
@@ -418,12 +418,12 @@ router.patch("/leave-pool/:user_id", csrfProtect, async (req, res, next) => {
     // ── audit log ─────────────────────────────────────────────
     await logAudit({
       req,
-      action:     "balance.update",
+      action: "balance.update",
       targetType: "leave_balance",
-      targetId:   Number(userId),
-      before:     before ? { total_days: before.total_days, used_days: before.used_days } : null,
-      after:      { total_days, used_days },
-      note:       `แก้ไขวันลาของ user_id ${userId} ปี ${year} → คงเหลือ ${remaining_days} วัน`,
+      targetId: Number(userId),
+      before: before ? { total_days: before.total_days, used_days: before.used_days } : null,
+      after: { total_days, used_days },
+      note: `แก้ไขวันลาของ user_id ${userId} ปี ${year} → คงเหลือ ${remaining_days} วัน`,
     });
 
     const [rows] = await pool.query(
@@ -460,13 +460,13 @@ router.get("/ot-requests", async (req, res, next) => {
       params.push(req.user.id);
     }
 
-    if (status)    { sql += " AND ot.status = ?";           params.push(status); }
-    if (user_id)   { sql += " AND ot.user_id = ?";          params.push(user_id); }
-    if (year)      { sql += " AND YEAR(ot.ot_date) = ?";    params.push(year); }
+    if (status) { sql += " AND ot.status = ?"; params.push(status); }
+    if (user_id) { sql += " AND ot.user_id = ?"; params.push(user_id); }
+    if (year) { sql += " AND YEAR(ot.ot_date) = ?"; params.push(year); }
     sql += " ORDER BY ot.created_at DESC";
 
     const [rows] = await pool.query(sql, params);
-    
+
     const mapped = rows.map(r => {
       let total_hours = null;
       if (r.start_time && r.end_time) {
@@ -478,14 +478,14 @@ router.get("/ot-requests", async (req, res, next) => {
         ...r,
         total_hours: total_hours !== null ? total_hours : r.total_hours,
         user: {
-          id:            r.user_id,
-          full_name:     r.user_full_name,
+          id: r.user_id,
+          full_name: r.user_full_name,
           employee_code: r.employee_code,
-          department:    r.department,
+          department: r.department,
         }
       };
     });
-    
+
     res.json(mapped);
   } catch (err) { next(err); }
 });
@@ -495,7 +495,7 @@ router.patch("/ot-requests/:id/approve", csrfProtect, async (req, res, next) => 
   const conn = await pool.getConnection();
   try {
     const { comment = null } = req.body;
-    const requestId  = req.params.id;
+    const requestId = req.params.id;
     const approverId = req.user.id;
 
     const [rows] = await conn.query(
@@ -512,7 +512,7 @@ router.patch("/ot-requests/:id/approve", csrfProtect, async (req, res, next) => 
     }
 
     const before = {
-      status:      rows[0].status,
+      status: rows[0].status,
       approved_by: rows[0].approved_by,
       approved_at: rows[0].approved_at,
     };
@@ -535,15 +535,15 @@ router.patch("/ot-requests/:id/approve", csrfProtect, async (req, res, next) => 
 
     await logAudit({
       req,
-      action:     "ot.approve",
+      action: "ot.approve",
       targetType: "ot_request",
-      targetId:   Number(requestId),
+      targetId: Number(requestId),
       before,
       after: {
-        status:      "approved",
+        status: "approved",
         approved_by: approverId,
         approved_at: now,
-        comment:     comment ?? null,
+        comment: comment ?? null,
       },
       note: comment ?? null,
       conn,
@@ -561,7 +561,7 @@ router.patch("/ot-requests/:id/reject", csrfProtect, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const { comment = null } = req.body;
-    const requestId  = req.params.id;
+    const requestId = req.params.id;
     const approverId = req.user.id;
 
     const [rows] = await conn.query(
@@ -578,7 +578,7 @@ router.patch("/ot-requests/:id/reject", csrfProtect, async (req, res, next) => {
     }
 
     const before = {
-      status:      rows[0].status,
+      status: rows[0].status,
       approved_by: rows[0].approved_by,
       approved_at: rows[0].approved_at,
     };
@@ -601,15 +601,15 @@ router.patch("/ot-requests/:id/reject", csrfProtect, async (req, res, next) => {
 
     await logAudit({
       req,
-      action:     "ot.reject",
+      action: "ot.reject",
       targetType: "ot_request",
-      targetId:   Number(requestId),
+      targetId: Number(requestId),
       before,
       after: {
-        status:      "rejected",
+        status: "rejected",
         approved_by: approverId,
         approved_at: now,
-        comment:     comment ?? null,
+        comment: comment ?? null,
       },
       note: comment ?? null,
       conn,
