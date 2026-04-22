@@ -30,7 +30,7 @@ CREATE TABLE `users` (
   `full_name`     varchar(255) DEFAULT NULL,
   `department`    varchar(255) DEFAULT NULL,
   `password`      varchar(255) DEFAULT NULL,
-  `role`          enum('user','lead','assistant manager','manager') NOT NULL DEFAULT 'user',
+  `role`          enum('user','lead','assistant manager','manager', 'admin') NOT NULL DEFAULT 'user',
   `supervisor_id` int(11)      DEFAULT NULL,
   `created_at`    timestamp    NOT NULL DEFAULT current_timestamp(),
   PRIMARY KEY (`id`),
@@ -53,9 +53,10 @@ INSERT INTO `users` (`id`, `employee_code`, `full_name`, `department`, `password
 (13, 'MKT-0013', 'นางสาวปานไพลิน  ปินใจ',    'การตลาด',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-18 09:30:00'),
 (14, 'MKT-0014', 'นางสาวธิษณา  ธัญญวิชยเวช',    'การตลาด',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-18 09:30:00'),
 (15, 'MKT-0015', 'นายวินัย  ลูกปัด',    'การตลาด',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-18 09:30:00'),
-(16, 'MKT-0016', 'นายชยพล  อุ่มเจริญ',    'การตลาด',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-18 09:30:00');
+(16, 'MKT-0016', 'นายชยพล  อุ่มเจริญ',    'การตลาด',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-18 09:30:00'),
+(17, 'test-0001', 'นายทดสอบระบบ',    'การตลาด',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'admin',        '2024-01-18 09:30:00');
 
-ALTER TABLE `users` MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=17;
+ALTER TABLE `users` MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=18;
 
 -- ────────────────────────────────────────────────────────────
 -- Table: leave_types
