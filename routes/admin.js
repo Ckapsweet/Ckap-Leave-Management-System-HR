@@ -421,6 +421,87 @@ router.patch("/ot-requests/:id/reject", csrfProtect, async (req, res, next) => {
   // logic เดิม
 });
 
+// ── GET /api/admin/reports/dashboard-stats ────────────────
+// Endpoint สำหรับหน้า OverviewDashboard (Admin)
+router.get("/reports/dashboard-stats", async (req, res, next) => {
+  try {
+    if (req.user.role !== "admin" && req.user.role !== "manager") {
+      return res.status(403).json({ message: "ไม่มีสิทธิ์เข้าถึงรายงาน" });
+    }
+
+    const currentYear = new Date().getFullYear();
+
+    // 1) Summary stats
+    const [[{ total_users }]] = await pool.query("SELECT COUNT(*) AS total_users FROM users");
+    const [[{ pending_leaves }]] = await pool.query(
+      "SELECT COUNT(*) AS pending_leaves FROM leave_requests WHERE status = 'pending'"
+    );
+
+    // pending OT — table may not exist yet, so catch gracefully
+    let pending_ots = 0;
+    try {
+      const [[otRow]] = await pool.query(
+        "SELECT COUNT(*) AS pending_ots FROM ot_requests WHERE status = 'pending'"
+      );
+      pending_ots = otRow.pending_ots;
+    } catch { /* table might not exist */ }
+
+    const [[{ total_approved_leave_days }]] = await pool.query(
+      `SELECT COALESCE(SUM(total_days), 0) AS total_approved_leave_days
+       FROM leave_requests
+       WHERE status = 'approved' AND YEAR(start_date) = ?`,
+      [currentYear]
+    );
+
+    // 2) Department stats (pie chart – จำนวนครั้งการลาแยกตามแผนก)
+    const [deptRows] = await pool.query(
+      `SELECT u.department AS name, COUNT(*) AS value
+       FROM leave_requests lr
+       JOIN users u ON lr.user_id = u.id
+       WHERE YEAR(lr.start_date) = ?
+       GROUP BY u.department
+       ORDER BY value DESC`,
+      [currentYear]
+    );
+
+    // 3) Monthly stats (bar chart – จำนวนครั้งที่ลาแยกตามเดือน)
+    const monthNames = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
+    const [monthRows] = await pool.query(
+      `SELECT MONTH(start_date) AS m, COUNT(*) AS cnt
+       FROM leave_requests
+       WHERE YEAR(start_date) = ?
+       GROUP BY MONTH(start_date)
+       ORDER BY m`,
+      [currentYear]
+    );
+    const monthMap = {};
+    monthRows.forEach(r => { monthMap[r.m] = r.cnt; });
+    const monthlyStats = monthNames.map((name, i) => ({
+      name,
+      "จำนวนครั้งที่ลา": monthMap[i + 1] || 0,
+    }));
+
+    // 4) Leave type stats (table – แยกตามแผนกและประเภทการลา)
+    const [leaveTypeRows] = await pool.query(
+      `SELECT u.department, lt.name AS leave_type, COALESCE(SUM(lr.total_days), 0) AS total_leave_days
+       FROM leave_requests lr
+       JOIN users u ON lr.user_id = u.id
+       JOIN leave_types lt ON lr.leave_type_id = lt.id
+       WHERE lr.status = 'approved' AND YEAR(lr.start_date) = ?
+       GROUP BY u.department, lt.name
+       ORDER BY u.department ASC`,
+      [currentYear]
+    );
+
+    res.json({
+      summary: { total_users, pending_leaves, pending_ots, total_approved_leave_days },
+      deptStats: deptRows,
+      monthlyStats,
+      leaveTypeStats: leaveTypeRows,
+    });
+  } catch (err) { next(err); }
+});
+
 // ── GET /api/admin/reports/leave-summary ─────────────────
 // Endpoint ใหม่สำหรับดึงข้อมูลสรุปไปทำ Dashboard ฝั่ง Frontend
 router.get("/reports/leave-summary", async (req, res, next) => {
