@@ -292,7 +292,12 @@ router.patch("/users/:id/assign-subordinate", csrfProtect, async (req, res, next
       return res.status(409).json({ message: "พนักงานนี้มีหัวหน้าอยู่แล้ว กรุณาติดต่อ admin" });
     }
 
-    const newSupervisor = assign ? callerId : null;
+    // If admin explicitly passes a supervisor_id, use it. Otherwise default to callerId if assigning.
+    const explicitSupervisor = req.body.supervisor_id;
+    const newSupervisor = assign 
+        ? (callerRole === "admin" && explicitSupervisor !== undefined ? explicitSupervisor : callerId) 
+        : null;
+
     await pool.query("UPDATE users SET supervisor_id = ? WHERE id = ?", [newSupervisor, userId]);
 
     await logAudit({
