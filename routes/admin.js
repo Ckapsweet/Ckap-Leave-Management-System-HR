@@ -5,7 +5,7 @@ import { authenticate, requireAdmin, csrfProtect } from "../middleware/auth.js";
 import { logAudit } from "../middleware/audit.js";
 
 const router = Router();
-router.use(authenticate, requireAdmin); // อย่าลืมเช็คว่า requireAdmin ใน middleware/auth.js อนุญาต 'admin' ด้วยนะครับ
+router.use(authenticate, requireAdmin);
 
 // ── helper ────────────────────────────────────────────────────
 function mapRow(r) {
@@ -37,7 +37,6 @@ function mapRow(r) {
 }
 
 function assertSameDept(req, res, dept) {
-  // ยกเว้น admin และ manager ให้ข้ามแผนกได้
   if (req.user.role === "admin" || req.user.role === "manager") return true;
 
   const isDeptAdmin = req.user.role === "assistant manager";
@@ -48,19 +47,50 @@ function assertSameDept(req, res, dept) {
   return true;
 }
 
-async function assertIsSubordinate(conn, supervisorId, userId, res, reqRole) {
-  // ถ้าเป็น admin ให้จัดการได้ทุกคน
-  if (reqRole === "admin") return true;
-
-  const [rows] = await conn.query(
-    "SELECT id FROM users WHERE id = ? AND supervisor_id = ? LIMIT 1",
-    [userId, supervisorId]
-  );
-  if (!rows[0]) {
-    res.status(403).json({ message: "คุณไม่มีสิทธิ์ดำเนินการกับพนักงานที่ไม่ใช่ลูกน้องของคุณ" });
+async function assertWorkflowRights(req, res, targetRow) {
+  if (req.user.role === "admin") return true;
+  if (targetRow.current_assignee_id !== req.user.id) {
+    res.status(403).json({ message: "ยังไม่ถึงลำดับการอนุมัติ" });
     return false;
   }
   return true;
+}
+
+// ── FIXED: getNextAssignee ────────────────────────────────────
+// เดินตาม role chain: lead → assistant manager → manager
+// ไม่ใช้แค่ supervisor_id แบบตาบอดอีกต่อไป
+async function getNextAssignee(conn, currentApproverId) {
+  // ดึง role + supervisor_id ของคนที่เพิ่ง approve
+  const [rows] = await conn.query(
+    "SELECT role, supervisor_id, department FROM users WHERE id = ?",
+    [currentApproverId]
+  );
+  const approver = rows[0];
+  if (!approver) return null;
+
+  // กำหนด role ถัดไปในสายการอนุมัติ
+  const nextRoleMap = {
+    lead: "assistant manager",
+    "assistant manager": "manager",
+  };
+  const nextRole = nextRoleMap[approver.role];
+  if (!nextRole) return null; // manager / admin = final ไม่มีคนถัดไป
+
+  // ลองหาจาก supervisor_id ก่อน (ตรงที่สุด)
+  if (approver.supervisor_id) {
+    const [supRows] = await conn.query(
+      "SELECT id, role FROM users WHERE id = ?",
+      [approver.supervisor_id]
+    );
+    if (supRows[0]?.role === nextRole) return supRows[0].id;
+  }
+
+  // Fallback: หาคนที่มี role นั้นใน department เดียวกัน
+  const [deptRows] = await conn.query(
+    "SELECT id FROM users WHERE role = ? AND department = ? LIMIT 1",
+    [nextRole, approver.department]
+  );
+  return deptRows[0]?.id ?? null;
 }
 
 // ── GET /api/admin/leave-requests ────────────────────────────
@@ -80,10 +110,14 @@ router.get("/leave-requests", async (req, res, next) => {
       WHERE 1=1`;
     const params = [];
 
-    // ถ้าไม่ใช่ admin ให้ดูได้เฉพาะคนที่อยู่ใต้สังกัด (Supervisor ID)
     if (["lead", "assistant manager", "manager"].includes(req.user.role) && req.user.role !== "admin") {
-      sql += " AND u.supervisor_id = ?";
-      params.push(req.user.id);
+      if (req.user.role === "manager") {
+        sql += " AND u.department = ?";
+        params.push(req.user.department);
+      } else {
+        sql += " AND (u.supervisor_id = ? OR lr.current_assignee_id = ?)";
+        params.push(req.user.id, req.user.id);
+      }
     }
 
     if (status) { sql += " AND lr.status = ?"; params.push(status); }
@@ -113,10 +147,8 @@ router.patch("/leave-requests/:id/approve", csrfProtect, async (req, res, next) 
     );
     if (!rows[0]) return res.status(404).json({ message: "ไม่พบคำขอลา" });
     if (!assertSameDept(req, res, rows[0].user_dept)) return;
+    if (!(await assertWorkflowRights(req, res, rows[0]))) return;
 
-    if (["lead", "assistant manager", "manager"].includes(req.user.role) && req.user.role !== "admin") {
-      if (!(await assertIsSubordinate(conn, approverId, rows[0].user_id, res, req.user.role))) return;
-    }
     if (rows[0].status !== "pending") {
       return res.status(400).json({ message: "คำขอนี้ถูกดำเนินการไปแล้ว" });
     }
@@ -125,15 +157,34 @@ router.patch("/leave-requests/:id/approve", csrfProtect, async (req, res, next) 
       status: rows[0].status,
       approved_by: rows[0].approved_by,
       approved_at: rows[0].approved_at,
+      current_assignee_id: rows[0].current_assignee_id,
     };
 
     await conn.beginTransaction();
     const now = new Date();
 
-    await conn.query(
-      "UPDATE leave_requests SET status = 'approved', approved_by = ?, approved_at = ? WHERE id = ?",
-      [approverId, now, requestId]
-    );
+    // FIXED: lead และ assistant manager ไม่ใช่ final เสมอ
+    const isFinalApproval = ["manager", "admin"].includes(req.user.role);
+
+    if (isFinalApproval) {
+      await conn.query(
+        "UPDATE leave_requests SET status = 'approved', approved_by = ?, approved_at = ?, current_assignee_id = NULL WHERE id = ?",
+        [approverId, now, requestId]
+      );
+      const year = new Date(rows[0].start_date).getFullYear();
+      await conn.query(
+        `UPDATE user_leave_pool SET used_days = used_days + ? WHERE user_id = ? AND year = ?`,
+        [rows[0].total_days, rows[0].user_id, year]
+      );
+    } else {
+      // ส่งต่อไปยัง role ถัดไปใน chain
+      const nextAssignee = await getNextAssignee(conn, approverId);
+      await conn.query(
+        "UPDATE leave_requests SET current_assignee_id = ? WHERE id = ?",
+        [nextAssignee, requestId]
+      );
+    }
+
     await conn.query(
       `INSERT INTO leave_approvals (leave_request_id, approver_id, status, comment, approved_at)
        VALUES (?, ?, 'approved', ?, ?)
@@ -141,15 +192,16 @@ router.patch("/leave-requests/:id/approve", csrfProtect, async (req, res, next) 
       [requestId, approverId, comment, now, comment, now]
     );
 
-    const year = new Date(rows[0].start_date).getFullYear();
-    await conn.query(
-      `UPDATE user_leave_pool
-       SET used_days = used_days + ?
-       WHERE user_id = ? AND year = ?`,
-      [rows[0].total_days, rows[0].user_id, year]
-    );
-
     await conn.commit();
+
+    const nextAssigneeForResponse = isFinalApproval ? null : await (async () => {
+      // ดึง next assignee อีกครั้งเพื่อ response (หลัง commit แล้ว)
+      const [updated] = await pool.query(
+        "SELECT current_assignee_id FROM leave_requests WHERE id = ?",
+        [requestId]
+      );
+      return updated[0]?.current_assignee_id ?? null;
+    })();
 
     await logAudit({
       req,
@@ -157,12 +209,16 @@ router.patch("/leave-requests/:id/approve", csrfProtect, async (req, res, next) 
       targetType: "leave_request",
       targetId: Number(requestId),
       before,
-      after: { status: "approved", approved_by: approverId, approved_at: now, comment: comment ?? null },
+      after: { status: isFinalApproval ? "approved" : "pending", approved_by: approverId, approved_at: now, comment: comment ?? null },
       note: comment ?? null,
       conn,
     });
 
-    res.json({ message: "อนุมัติคำขอลาเรียบร้อย" });
+    res.json({
+      message: isFinalApproval ? "อนุมัติคำขอลาเรียบร้อย" : "รับทราบและส่งต่อคำขอเรียบร้อย",
+      status: isFinalApproval ? "approved" : "pending",
+      current_assignee_id: nextAssigneeForResponse,
+    });
   } catch (err) {
     await conn.rollback();
     next(err);
@@ -186,10 +242,8 @@ router.patch("/leave-requests/:id/reject", csrfProtect, async (req, res, next) =
     );
     if (!rows[0]) return res.status(404).json({ message: "ไม่พบคำขอลา" });
     if (!assertSameDept(req, res, rows[0].user_dept)) return;
+    if (!(await assertWorkflowRights(req, res, rows[0]))) return;
 
-    if (["lead", "assistant manager", "manager"].includes(req.user.role) && req.user.role !== "admin") {
-      if (!(await assertIsSubordinate(conn, approverId, rows[0].user_id, res, req.user.role))) return;
-    }
     if (rows[0].status !== "pending") {
       return res.status(400).json({ message: "คำขอนี้ถูกดำเนินการไปแล้ว" });
     }
@@ -198,13 +252,14 @@ router.patch("/leave-requests/:id/reject", csrfProtect, async (req, res, next) =
       status: rows[0].status,
       approved_by: rows[0].approved_by,
       approved_at: rows[0].approved_at,
+      current_assignee_id: rows[0].current_assignee_id,
     };
 
     await conn.beginTransaction();
     const now = new Date();
 
     await conn.query(
-      "UPDATE leave_requests SET status = 'rejected', approved_by = ?, approved_at = ? WHERE id = ?",
+      "UPDATE leave_requests SET status = 'rejected', approved_by = ?, approved_at = ?, current_assignee_id = NULL WHERE id = ?",
       [approverId, now, requestId]
     );
     await conn.query(
@@ -227,7 +282,11 @@ router.patch("/leave-requests/:id/reject", csrfProtect, async (req, res, next) =
       conn,
     });
 
-    res.json({ message: "ปฏิเสธคำขอลาเรียบร้อย" });
+    res.json({
+      message: "ปฏิเสธคำขอลาเรียบร้อย",
+      status: "rejected",
+      current_assignee_id: null,
+    });
   } catch (err) {
     await conn.rollback();
     next(err);
@@ -279,7 +338,7 @@ router.patch("/users/:id/assign-subordinate", csrfProtect, async (req, res, next
     let allowedSubRoles = [];
     if (callerRole === "lead") allowedSubRoles = ["user"];
     else if (callerRole === "assistant manager") allowedSubRoles = ["lead"];
-    else allowedSubRoles = ["assistant manager", "lead", "user", "manager"]; // admin/manager สามารถคุมได้ทั้งหมด
+    else allowedSubRoles = ["assistant manager", "lead", "user", "manager"];
 
     if (!allowedSubRoles.includes(target[0].role)) {
       return res.status(400).json({ message: `ไม่สามารถกำหนด role ${target[0].role} เป็นลูกน้องได้` });
@@ -292,7 +351,6 @@ router.patch("/users/:id/assign-subordinate", csrfProtect, async (req, res, next
       return res.status(409).json({ message: "พนักงานนี้มีหัวหน้าอยู่แล้ว กรุณาติดต่อ admin" });
     }
 
-    // If admin explicitly passes a supervisor_id, use it. Otherwise default to callerId if assigning.
     const explicitSupervisor = req.body.supervisor_id;
     const newSupervisor = assign
       ? (callerRole === "admin" && explicitSupervisor !== undefined ? explicitSupervisor : callerId)
@@ -388,10 +446,14 @@ router.get("/ot-requests", async (req, res, next) => {
       WHERE 1=1`;
     const params = [];
 
-    // admin เห็นทุกคน, role อื่นเห็นเฉพาะลูกน้อง
     if (["lead", "assistant manager", "manager"].includes(req.user.role) && req.user.role !== "admin") {
-      sql += " AND u.supervisor_id = ?";
-      params.push(req.user.id);
+      if (req.user.role === "manager") {
+        sql += " AND u.department = ?";
+        params.push(req.user.department);
+      } else {
+        sql += " AND (u.supervisor_id = ? OR ot.current_assignee_id = ?)";
+        params.push(req.user.id, req.user.id);
+      }
     }
 
     if (status) { sql += " AND ot.status = ?"; params.push(status); }
@@ -416,18 +478,163 @@ router.get("/ot-requests", async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// ── PATCH /api/admin/ot-requests/:id/approve & /reject ────────
-// ... โค้ดสำหรับ OT Approve และ Reject ทำงานเหมือนเดิม ...
+// ── PATCH /api/admin/ot-requests/:id/approve ─────────────────
 router.patch("/ot-requests/:id/approve", csrfProtect, async (req, res, next) => {
-  // logic เดิม
+  const conn = await pool.getConnection();
+  try {
+    const { comment = null } = req.body;
+    const requestId = req.params.id;
+    const approverId = req.user.id;
+
+    const [rows] = await conn.query(
+      `SELECT ot.*, u.department AS user_dept
+       FROM ot_requests ot
+       JOIN users u ON ot.user_id = u.id
+       WHERE ot.id = ? LIMIT 1`,
+      [requestId]
+    );
+    if (!rows[0]) return res.status(404).json({ message: "ไม่พบคำขอ OT" });
+    if (!assertSameDept(req, res, rows[0].user_dept)) return;
+    if (!(await assertWorkflowRights(req, res, rows[0]))) return;
+
+    if (rows[0].status !== "pending") {
+      return res.status(400).json({ message: "คำขอนี้ถูกดำเนินการไปแล้ว" });
+    }
+
+    const before = {
+      status: rows[0].status,
+      approved_by: rows[0].approved_by,
+      approved_at: rows[0].approved_at,
+      current_assignee_id: rows[0].current_assignee_id,
+    };
+
+    await conn.beginTransaction();
+    const now = new Date();
+
+    // FIXED: lead และ assistant manager ไม่ใช่ final
+    const isFinalApproval = ["manager", "admin"].includes(req.user.role);
+
+    if (isFinalApproval) {
+      await conn.query(
+        "UPDATE ot_requests SET status = 'approved', approved_by = ?, approved_at = ?, current_assignee_id = NULL WHERE id = ?",
+        [approverId, now, requestId]
+      );
+    } else {
+      const nextAssignee = await getNextAssignee(conn, approverId);
+      await conn.query(
+        "UPDATE ot_requests SET current_assignee_id = ? WHERE id = ?",
+        [nextAssignee, requestId]
+      );
+    }
+
+    await conn.query(
+      `INSERT INTO ot_approvals (ot_request_id, approver_id, status, comment, approved_at)
+       VALUES (?, ?, 'approved', ?, ?)
+       ON DUPLICATE KEY UPDATE status = 'approved', comment = ?, approved_at = ?`,
+      [requestId, approverId, comment, now, comment, now]
+    );
+
+    await conn.commit();
+
+    const nextAssigneeForResponse = isFinalApproval ? null : await (async () => {
+      const [updated] = await pool.query(
+        "SELECT current_assignee_id FROM ot_requests WHERE id = ?",
+        [requestId]
+      );
+      return updated[0]?.current_assignee_id ?? null;
+    })();
+
+    await logAudit({
+      req,
+      action: "ot.approve",
+      targetType: "ot_request",
+      targetId: Number(requestId),
+      before,
+      after: { status: isFinalApproval ? "approved" : "pending", approved_by: approverId, approved_at: now, comment: comment ?? null },
+      note: comment ?? null,
+      conn,
+    });
+
+    res.json({
+      message: isFinalApproval ? "อนุมัติคำขอ OT เรียบร้อย" : "รับทราบและส่งต่อคำขอเรียบร้อย",
+      status: isFinalApproval ? "approved" : "pending",
+      current_assignee_id: nextAssigneeForResponse,
+    });
+  } catch (err) {
+    await conn.rollback();
+    next(err);
+  } finally { conn.release(); }
 });
 
+// ── PATCH /api/admin/ot-requests/:id/reject ──────────────────
 router.patch("/ot-requests/:id/reject", csrfProtect, async (req, res, next) => {
-  // logic เดิม
+  const conn = await pool.getConnection();
+  try {
+    const { comment = null } = req.body;
+    const requestId = req.params.id;
+    const approverId = req.user.id;
+
+    const [rows] = await conn.query(
+      `SELECT ot.*, u.department AS user_dept
+       FROM ot_requests ot
+       JOIN users u ON ot.user_id = u.id
+       WHERE ot.id = ? LIMIT 1`,
+      [requestId]
+    );
+    if (!rows[0]) return res.status(404).json({ message: "ไม่พบคำขอ OT" });
+    if (!assertSameDept(req, res, rows[0].user_dept)) return;
+    if (!(await assertWorkflowRights(req, res, rows[0]))) return;
+
+    if (rows[0].status !== "pending") {
+      return res.status(400).json({ message: "คำขอนี้ถูกดำเนินการไปแล้ว" });
+    }
+
+    const before = {
+      status: rows[0].status,
+      approved_by: rows[0].approved_by,
+      approved_at: rows[0].approved_at,
+      current_assignee_id: rows[0].current_assignee_id,
+    };
+
+    await conn.beginTransaction();
+    const now = new Date();
+
+    await conn.query(
+      "UPDATE ot_requests SET status = 'rejected', approved_by = ?, approved_at = ?, current_assignee_id = NULL WHERE id = ?",
+      [approverId, now, requestId]
+    );
+    await conn.query(
+      `INSERT INTO ot_approvals (ot_request_id, approver_id, status, comment, approved_at)
+       VALUES (?, ?, 'rejected', ?, ?)
+       ON DUPLICATE KEY UPDATE status = 'rejected', comment = ?, approved_at = ?`,
+      [requestId, approverId, comment, now, comment, now]
+    );
+
+    await conn.commit();
+
+    await logAudit({
+      req,
+      action: "ot.reject",
+      targetType: "ot_request",
+      targetId: Number(requestId),
+      before,
+      after: { status: "rejected", approved_by: approverId, approved_at: now, comment: comment ?? null },
+      note: comment ?? null,
+      conn,
+    });
+
+    res.json({
+      message: "ปฏิเสธคำขอ OT เรียบร้อย",
+      status: "rejected",
+      current_assignee_id: null,
+    });
+  } catch (err) {
+    await conn.rollback();
+    next(err);
+  } finally { conn.release(); }
 });
 
-// ── GET /api/admin/reports/dashboard-stats ────────────────
-// Endpoint สำหรับหน้า OverviewDashboard (Admin)
+// ── GET /api/admin/reports/dashboard-stats ────────────────────
 router.get("/reports/dashboard-stats", async (req, res, next) => {
   try {
     if (req.user.role !== "admin" && req.user.role !== "manager") {
@@ -436,13 +643,11 @@ router.get("/reports/dashboard-stats", async (req, res, next) => {
 
     const currentYear = new Date().getFullYear();
 
-    // 1) Summary stats
     const [[{ total_users }]] = await pool.query("SELECT COUNT(*) AS total_users FROM users");
     const [[{ pending_leaves }]] = await pool.query(
       "SELECT COUNT(*) AS pending_leaves FROM leave_requests WHERE status = 'pending'"
     );
 
-    // pending OT — table may not exist yet, so catch gracefully
     let pending_ots = 0;
     try {
       const [[otRow]] = await pool.query(
@@ -458,7 +663,6 @@ router.get("/reports/dashboard-stats", async (req, res, next) => {
       [currentYear]
     );
 
-    // 2) Department stats (pie chart – จำนวนครั้งการลาแยกตามแผนก)
     const [deptRows] = await pool.query(
       `SELECT u.department AS name, COUNT(*) AS value
        FROM leave_requests lr
@@ -469,7 +673,6 @@ router.get("/reports/dashboard-stats", async (req, res, next) => {
       [currentYear]
     );
 
-    // 3) Monthly stats (bar chart – จำนวนครั้งที่ลาแยกตามเดือน)
     const monthNames = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
     const [monthRows] = await pool.query(
       `SELECT MONTH(start_date) AS m, COUNT(*) AS cnt
@@ -486,7 +689,6 @@ router.get("/reports/dashboard-stats", async (req, res, next) => {
       "จำนวนครั้งที่ลา": monthMap[i + 1] || 0,
     }));
 
-    // 4) Leave type stats (table – แยกตามแผนกและประเภทการลา)
     const [leaveTypeRows] = await pool.query(
       `SELECT u.department, lt.name AS leave_type, COALESCE(SUM(lr.total_days), 0) AS total_leave_days
        FROM leave_requests lr
@@ -507,8 +709,7 @@ router.get("/reports/dashboard-stats", async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// ── GET /api/admin/reports/leave-summary ─────────────────
-// Endpoint ใหม่สำหรับดึงข้อมูลสรุปไปทำ Dashboard ฝั่ง Frontend
+// ── GET /api/admin/reports/leave-summary ─────────────────────
 router.get("/reports/leave-summary", async (req, res, next) => {
   try {
     if (req.user.role !== "admin" && req.user.role !== "manager") {
@@ -531,69 +732,68 @@ router.get("/reports/leave-summary", async (req, res, next) => {
 
 // ── GET /api/admin/departments ────────────────────────────────
 router.get("/departments", async (req, res, next) => {
-    try {
-      const [rows] = await pool.query("SELECT * FROM departments ORDER BY name ASC");
-      res.json(rows);
-    } catch (err) { next(err); }
-  });
+  try {
+    const [rows] = await pool.query("SELECT * FROM departments ORDER BY name ASC");
+    res.json(rows);
+  } catch (err) { next(err); }
+});
 
-  // ── POST /api/admin/departments ───────────────────────────────
-  router.post("/departments", csrfProtect, async (req, res, next) => {
-    try {
-      if (req.user.role !== "admin" && req.user.role !== "manager") {
-        return res.status(403).json({ message: "ไม่มีสิทธิ์ใช้งาน" });
-      }
-      const { name } = req.body;
-      if (!name) return res.status(400).json({ message: "กรุณาระบุชื่อแผนก" });
-
-      await pool.query("INSERT INTO departments (name) VALUES (?)", [name]);
-      res.json({ message: "เพิ่มแผนกเรียบร้อย" });
-    } catch (err) {
-      if (err.code === 'ER_DUP_ENTRY') {
-        return res.status(400).json({ message: "ชื่อแผนกนี้มีอยู่แล้ว" });
-      }
-      next(err);
+// ── POST /api/admin/departments ───────────────────────────────
+router.post("/departments", csrfProtect, async (req, res, next) => {
+  try {
+    if (req.user.role !== "admin" && req.user.role !== "manager") {
+      return res.status(403).json({ message: "ไม่มีสิทธิ์ใช้งาน" });
     }
-  });
+    const { name } = req.body;
+    if (!name) return res.status(400).json({ message: "กรุณาระบุชื่อแผนก" });
 
-  // ── PUT /api/admin/departments/:id ────────────────────────────
-  router.put("/departments/:id", csrfProtect, async (req, res, next) => {
-    try {
-      if (req.user.role !== "admin" && req.user.role !== "manager") {
-        return res.status(403).json({ message: "ไม่มีสิทธิ์ใช้งาน" });
-      }
-      const { name } = req.body;
-      if (!name) return res.status(400).json({ message: "กรุณาระบุชื่อแผนก" });
-
-      await pool.query("UPDATE departments SET name = ? WHERE id = ?", [name, req.params.id]);
-      res.json({ message: "แก้ไขแผนกเรียบร้อย" });
-    } catch (err) {
-      if (err.code === 'ER_DUP_ENTRY') {
-        return res.status(400).json({ message: "ชื่อแผนกนี้มีอยู่แล้ว" });
-      }
-      next(err);
+    await pool.query("INSERT INTO departments (name) VALUES (?)", [name]);
+    res.json({ message: "เพิ่มแผนกเรียบร้อย" });
+  } catch (err) {
+    if (err.code === "ER_DUP_ENTRY") {
+      return res.status(400).json({ message: "ชื่อแผนกนี้มีอยู่แล้ว" });
     }
-  });
+    next(err);
+  }
+});
 
-  // ── DELETE /api/admin/departments/:id ─────────────────────────
-  router.delete("/departments/:id", csrfProtect, async (req, res, next) => {
-    try {
-      if (req.user.role !== "admin" && req.user.role !== "manager") {
-        return res.status(403).json({ message: "ไม่มีสิทธิ์ใช้งาน" });
-      }
+// ── PUT /api/admin/departments/:id ────────────────────────────
+router.put("/departments/:id", csrfProtect, async (req, res, next) => {
+  try {
+    if (req.user.role !== "admin" && req.user.role !== "manager") {
+      return res.status(403).json({ message: "ไม่มีสิทธิ์ใช้งาน" });
+    }
+    const { name } = req.body;
+    if (!name) return res.status(400).json({ message: "กรุณาระบุชื่อแผนก" });
 
-      // Check if any users are in this department
-      const [dept] = await pool.query("SELECT name FROM departments WHERE id = ?", [req.params.id]);
-      if (!dept[0]) return res.status(404).json({ message: "ไม่พบแผนก" });
+    await pool.query("UPDATE departments SET name = ? WHERE id = ?", [name, req.params.id]);
+    res.json({ message: "แก้ไขแผนกเรียบร้อย" });
+  } catch (err) {
+    if (err.code === "ER_DUP_ENTRY") {
+      return res.status(400).json({ message: "ชื่อแผนกนี้มีอยู่แล้ว" });
+    }
+    next(err);
+  }
+});
 
-      const [users] = await pool.query("SELECT id FROM users WHERE department = ? LIMIT 1", [dept[0].name]);
-      if (users.length > 0) {
-        return res.status(400).json({ message: "ไม่สามารถลบแผนกที่มีพนักงานสังกัดอยู่ได้" });
-      }
+// ── DELETE /api/admin/departments/:id ─────────────────────────
+router.delete("/departments/:id", csrfProtect, async (req, res, next) => {
+  try {
+    if (req.user.role !== "admin" && req.user.role !== "manager") {
+      return res.status(403).json({ message: "ไม่มีสิทธิ์ใช้งาน" });
+    }
 
-      await pool.query("DELETE FROM departments WHERE id = ?", [req.params.id]);
-      res.json({ message: "ลบแผนกเรียบร้อย" });
-    } catch (err) { next(err); }
-  });
+    const [dept] = await pool.query("SELECT name FROM departments WHERE id = ?", [req.params.id]);
+    if (!dept[0]) return res.status(404).json({ message: "ไม่พบแผนก" });
 
-  export default router;
+    const [users] = await pool.query("SELECT id FROM users WHERE department = ? LIMIT 1", [dept[0].name]);
+    if (users.length > 0) {
+      return res.status(400).json({ message: "ไม่สามารถลบแผนกที่มีพนักงานสังกัดอยู่ได้" });
+    }
+
+    await pool.query("DELETE FROM departments WHERE id = ?", [req.params.id]);
+    res.json({ message: "ลบแผนกเรียบร้อย" });
+  } catch (err) { next(err); }
+});
+
+export default router;

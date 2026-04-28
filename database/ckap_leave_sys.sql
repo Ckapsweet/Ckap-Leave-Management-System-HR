@@ -20,6 +20,21 @@ SET time_zone = "+00:00";
 -- Database: `ckap_leave_sys`
 -- ============================================================
 
+CREATE TABLE `departments` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `name` varchar(255) NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `name` (`name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+INSERT INTO `departments` (`name`) VALUES
+('วิศวกรรมซอฟต์แวร์'),
+('การตลาด'),
+('ทรัพยากรบุคคล'),
+('การเงิน'),
+('ฝ่ายขาย');
+
 -- ────────────────────────────────────────────────────────────
 -- Table: users
 -- ────────────────────────────────────────────────────────────
@@ -94,6 +109,7 @@ CREATE TABLE `leave_requests` (
   `total_days`    decimal(5,2)    DEFAULT NULL,
   `reason`        text            DEFAULT NULL,
   `status`        enum('pending','approved','rejected') DEFAULT 'pending',
+  `current_assignee_id` int(11) DEFAULT NULL,
   `approved_by`   int(11)         DEFAULT NULL,
   `approved_at`   datetime        DEFAULT NULL,
   `created_at`    timestamp       NOT NULL DEFAULT current_timestamp(),
@@ -246,6 +262,7 @@ CREATE TABLE `ot_requests` (
   `total_hours`   decimal(5,2)    DEFAULT NULL,
   `reason`        text            DEFAULT NULL,
   `status`        enum('pending','approved','rejected') DEFAULT 'pending',
+  `current_assignee_id` int(11) DEFAULT NULL,
   `approved_by`   int(11)         DEFAULT NULL,
   `approved_at`   datetime        DEFAULT NULL,
   `created_at`    timestamp       NOT NULL DEFAULT current_timestamp(),

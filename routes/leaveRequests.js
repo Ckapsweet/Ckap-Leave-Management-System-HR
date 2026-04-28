@@ -17,13 +17,13 @@ function mapRow(r) {
   }
   return {
     ...r,
-    leave_unit:  isHour ? "hour" : "day",
+    leave_unit: isHour ? "hour" : "day",
     total_hours,
     leave_type: {
-      id:          r.leave_type_id,
-      name:        r.leave_type_name,
+      id: r.leave_type_id,
+      name: r.leave_type_name,
       description: r.leave_type_description,
-      max_days:    r.leave_type_max_days,
+      max_days: r.leave_type_max_days,
     },
   };
 }
@@ -31,7 +31,7 @@ function mapRow(r) {
 // ── GET /api/leave-requests/today ─────────────────────────────
 router.get("/today", authenticate, async (req, res, next) => {
   try {
-    const today = new Date().toISOString().split("T")[0]; // "YYYY-MM-DD"
+    const today = new Date().toISOString().split("T")[0];
     const [rows] = await pool.query(
       `SELECT lr.*, u.full_name AS user_name, u.department AS user_department,
               lt.name AS leave_type_name, lt.description AS leave_type_description,
@@ -49,8 +49,8 @@ router.get("/today", authenticate, async (req, res, next) => {
       user: {
         id: r.user_id,
         full_name: r.user_name,
-        department: r.user_department
-      }
+        department: r.user_department,
+      },
     })));
   } catch (err) { next(err); }
 });
@@ -94,10 +94,10 @@ router.get("/report/monthly", authenticate, async (req, res, next) => {
       [req.user.id, year]
     );
     const months = Array.from({ length: 12 }, (_, i) => ({
-      month:      i + 1,
+      month: i + 1,
       month_name: new Date(2000, i, 1).toLocaleString("th-TH", { month: "short" }),
       total_days: 0,
-      by_type:    {},
+      by_type: {},
     }));
     rows.forEach((r) => {
       const m = months[r.month - 1];
@@ -164,9 +164,9 @@ router.post("/", authenticate, csrfProtect, async (req, res, next) => {
       leave_type_id,
       start_date,
       end_date,
-      start_time  = null,
-      end_time    = null,
-      total_days  = 0,
+      start_time = null,
+      end_time = null,
+      total_days = 0,
       total_hours = null,
       reason,
     } = req.body;
@@ -180,7 +180,7 @@ router.post("/", authenticate, csrfProtect, async (req, res, next) => {
     );
     if (!types[0]) return res.status(400).json({ message: "ประเภทการลาไม่ถูกต้อง" });
 
-    const isHour          = !!start_time;
+    const isHour = !!start_time;
     const totalDaysToSave = isHour
       ? parseFloat(((total_hours ?? 0) / 8).toFixed(2))
       : total_days;
@@ -234,11 +234,50 @@ router.post("/", authenticate, csrfProtect, async (req, res, next) => {
     const approvedBy = isAutoApprove ? req.user.id : null;
     const approvedAt = isAutoApprove ? new Date() : null;
 
+    // ── FIXED: หา assignee แรกในสาย (ต้องเป็น lead) ──────────
+    let assigneeId = null;
+    if (!isAutoApprove) {
+      // ดึง supervisor ของ user และตรวจ role
+      const [supRows] = await conn.query(
+        `SELECT u2.id, u2.role
+         FROM users u1
+         JOIN users u2 ON u2.id = u1.supervisor_id
+         WHERE u1.id = ?`,
+        [req.user.id]
+      );
+
+      if (supRows[0]) {
+        // supervisor มีอยู่และ role ถูกต้อง → ใช้เลย
+        assigneeId = supRows[0].id;
+      } else {
+        // ไม่มี supervisor → fallback หา lead ใน department เดียวกัน
+        const [leadRows] = await conn.query(
+          `SELECT id FROM users
+           WHERE department = (SELECT department FROM users WHERE id = ?)
+             AND role = 'lead'
+           LIMIT 1`,
+          [req.user.id]
+        );
+        assigneeId = leadRows[0]?.id ?? null;
+        // ถ้าไม่มี lead ใน dept → หา assistant manager
+        if (!assigneeId) {
+          const [amRows] = await conn.query(
+            `SELECT id FROM users
+             WHERE department = (SELECT department FROM users WHERE id = ?)
+               AND role = 'assistant manager'
+             LIMIT 1`,
+            [req.user.id]
+          );
+          assigneeId = amRows[0]?.id ?? null;
+        }
+      }
+    }
+
     const [result] = await conn.query(
       `INSERT INTO leave_requests
-         (user_id, leave_type_id, start_date, end_date, start_time, end_time, total_days, reason, status, approved_by, approved_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [req.user.id, leave_type_id, start_date, end_date, start_time, end_time, totalDaysToSave, reason, finalStatus, approvedBy, approvedAt]
+         (user_id, leave_type_id, start_date, end_date, start_time, end_time, total_days, reason, status, approved_by, approved_at, current_assignee_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [req.user.id, leave_type_id, start_date, end_date, start_time, end_time, totalDaysToSave, reason, finalStatus, approvedBy, approvedAt, assigneeId]
     );
 
     if (isAutoApprove) {
@@ -247,7 +286,6 @@ router.post("/", authenticate, csrfProtect, async (req, res, next) => {
          VALUES (?, ?, 'approved', 'อนุมัติอัตโนมัติ (สิทธิ์ Manager)', ?)`,
         [result.insertId, req.user.id, approvedAt]
       );
-
       await conn.query(
         `UPDATE user_leave_pool
          SET used_days = used_days + ?
@@ -267,12 +305,11 @@ router.post("/", authenticate, csrfProtect, async (req, res, next) => {
     );
     const created = mapRow(rows[0]);
 
-    // ── audit log ─────────────────────────────────────────────
     await logAudit({
       req,
-      action:     "leave.create",
+      action: "leave.create",
       targetType: "leave_request",
-      targetId:   result.insertId,
+      targetId: result.insertId,
       after: {
         leave_type_id,
         start_date,
@@ -307,18 +344,17 @@ router.delete("/:id", authenticate, csrfProtect, async (req, res, next) => {
 
     await pool.query("DELETE FROM leave_requests WHERE id = ?", [req.params.id]);
 
-    // ── audit log ─────────────────────────────────────────────
     await logAudit({
       req,
-      action:     "leave.cancel",
+      action: "leave.cancel",
       targetType: "leave_request",
-      targetId:   rows[0].id,
+      targetId: rows[0].id,
       before: {
-        status:     rows[0].status,
+        status: rows[0].status,
         start_date: rows[0].start_date,
-        end_date:   rows[0].end_date,
+        end_date: rows[0].end_date,
         total_days: rows[0].total_days,
-        reason:     rows[0].reason,
+        reason: rows[0].reason,
       },
     });
 
