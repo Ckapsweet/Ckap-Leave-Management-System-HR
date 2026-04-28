@@ -14,11 +14,12 @@ export function authenticate(req, res, next) {
   }
 }
 
-// ── เช็ค role manager หรือสูงกว่า (hr) ──────────────────────
-// manager = approve/reject leave, hr = superadmin (จัดการ user ด้วย)
+// ── เช็ค role assistant manager หรือสูงกว่า (manager) ──────────────────────
+// manager = approve/reject leave, จัดการ user ด้วย (แทนที่ hr/super_admin)
 export function requireAdmin(req, res, next) {
-  if (req.user?.role !== "manager") {
-    return res.status(403).json({ message: "Forbidden: manager only" });
+  const allowedRoles = ["manager", "assistant manager", "lead", "admin"];
+  if (!allowedRoles.includes(req.user?.role)) {
+    return res.status(403).json({ message: "Forbidden: manager/assistant manager/lead access only" });
   }
   next();
 }

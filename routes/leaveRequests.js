@@ -28,6 +28,33 @@ function mapRow(r) {
   };
 }
 
+// ── GET /api/leave-requests/today ─────────────────────────────
+router.get("/today", authenticate, async (req, res, next) => {
+  try {
+    const today = new Date().toISOString().split("T")[0]; // "YYYY-MM-DD"
+    const [rows] = await pool.query(
+      `SELECT lr.*, u.full_name AS user_name, u.department AS user_department,
+              lt.name AS leave_type_name, lt.description AS leave_type_description,
+              lt.max_days AS leave_type_max_days
+       FROM leave_requests lr
+       JOIN users u ON lr.user_id = u.id
+       JOIN leave_types lt ON lr.leave_type_id = lt.id
+       WHERE lr.status = 'approved'
+         AND ? BETWEEN lr.start_date AND lr.end_date
+       ORDER BY lr.start_date DESC`,
+      [today]
+    );
+    res.json(rows.map(r => ({
+      ...mapRow(r),
+      user: {
+        id: r.user_id,
+        full_name: r.user_name,
+        department: r.user_department
+      }
+    })));
+  } catch (err) { next(err); }
+});
+
 // ── GET /api/leave-requests/my ────────────────────────────────
 router.get("/my", authenticate, async (req, res, next) => {
   try {
@@ -201,12 +228,34 @@ router.post("/", authenticate, csrfProtect, async (req, res, next) => {
     }
 
     await conn.beginTransaction();
+
+    const isAutoApprove = req.user.role === "manager";
+    const finalStatus = isAutoApprove ? "approved" : "pending";
+    const approvedBy = isAutoApprove ? req.user.id : null;
+    const approvedAt = isAutoApprove ? new Date() : null;
+
     const [result] = await conn.query(
       `INSERT INTO leave_requests
-         (user_id, leave_type_id, start_date, end_date, start_time, end_time, total_days, reason, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
-      [req.user.id, leave_type_id, start_date, end_date, start_time, end_time, totalDaysToSave, reason]
+         (user_id, leave_type_id, start_date, end_date, start_time, end_time, total_days, reason, status, approved_by, approved_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [req.user.id, leave_type_id, start_date, end_date, start_time, end_time, totalDaysToSave, reason, finalStatus, approvedBy, approvedAt]
     );
+
+    if (isAutoApprove) {
+      await conn.query(
+        `INSERT INTO leave_approvals (leave_request_id, approver_id, status, comment, approved_at)
+         VALUES (?, ?, 'approved', 'อนุมัติอัตโนมัติ (สิทธิ์ Manager)', ?)`,
+        [result.insertId, req.user.id, approvedAt]
+      );
+
+      await conn.query(
+        `UPDATE user_leave_pool
+         SET used_days = used_days + ?
+         WHERE user_id = ? AND year = ?`,
+        [totalDaysToSave, req.user.id, year]
+      );
+    }
+
     await conn.commit();
 
     const [rows] = await pool.query(
@@ -232,7 +281,7 @@ router.post("/", authenticate, csrfProtect, async (req, res, next) => {
         end_time,
         total_days: totalDaysToSave,
         reason,
-        status: "pending",
+        status: finalStatus,
       },
     });
 

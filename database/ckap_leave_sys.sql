@@ -30,26 +30,33 @@ CREATE TABLE `users` (
   `full_name`     varchar(255) DEFAULT NULL,
   `department`    varchar(255) DEFAULT NULL,
   `password`      varchar(255) DEFAULT NULL,
-  `role`          enum('user','hr','admin','super_admin') NOT NULL DEFAULT 'user',
+  `role`          enum('user','lead','assistant manager','manager', 'admin') NOT NULL DEFAULT 'user',
+  `supervisor_id` int(11)      DEFAULT NULL,
   `created_at`    timestamp    NOT NULL DEFAULT current_timestamp(),
-  PRIMARY KEY (`id`)
+  PRIMARY KEY (`id`),
+  CONSTRAINT `fk_user_supervisor` FOREIGN KEY (`supervisor_id`) REFERENCES `users` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 INSERT INTO `users` (`id`, `employee_code`, `full_name`, `department`, `password`, `role`, `created_at`) VALUES
-(1,  'EMP-0001', 'วิไล สุวรรณภูมิ',   'ทรัพยากรบุคคล',       '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'super_admin', '2024-01-10 08:00:00'),
-(2,  'EMP-0002', 'ประเสริฐ มีสุข',      'วิศวกรรมซอฟต์แวร์',   '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'admin',       '2024-01-10 08:05:00'),
-(3,  'EMP-0003', 'ธนพล วิชัยดิษฐ',     'วิศวกรรมซอฟต์แวร์',   '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-15 09:00:00'),
-(4,  'EMP-0004', 'สมหญิง ดวงดี',        'การตลาด',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-15 09:10:00'),
-(5,  'EMP-0005', 'กิตติพงษ์ รุ่งเรือง', 'การเงิน',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-16 09:00:00'),
-(6,  'EMP-0006', 'พรทิพย์ แสงจันทร์',   'การตลาด',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-16 09:15:00'),
-(7,  'EMP-0007', 'นัทธพงศ์ ทองดี',      'ปฏิบัติการ',           '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-17 09:00:00'),
-(8,  'EMP-0008', 'อรุณี ใจงาม',         'วิศวกรรมซอฟต์แวร์',   '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-17 09:20:00'),
-(9,  'EMP-0009', 'ภูวนาถ ศรีสมบูรณ์',   'ปฏิบัติการ',           '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-18 09:00:00'),
-(10, 'EMP-0010', 'มณีรัตน์ พงษ์ไพร',    'การเงิน',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-18 09:30:00'),
-(11, 'EMP001',   'Test User',            NULL,                    '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2026-03-19 09:08:04'),
-(12, 'HR001',    'HR User',              NULL,                    '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'hr',          '2026-03-19 09:08:04');
+(1,  'MKT-0001', 'นางสาวปวิดา  กาญจนางกูล',   'การตลาด',       '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'manager', '2024-01-10 08:00:00'),
+(2,  'MKT-0002', 'นางสาวภัทรา  พงษ์การุณ',      'การตลาด',   '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'assistant manager',       '2024-01-10 08:05:00'),
+(3,  'MKT-0003', 'นายพูนศักดิ์  วงศ์มกรพันธ์',     'การตลาด',   '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'lead',        '2024-01-15 09:00:00'),
+(4,  'MKT-0004', 'นางสาวอนงค์กานต์  เหียดใส',        'การตลาด',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-15 09:10:00'),
+(5,  'MKT-0005', 'นางสาวพรปวีณ์  เทพวิจิตร์', 'การตลาด',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-16 09:00:00'),
+(6,  'MKT-0006', 'นางสาวนพวรรณ  ศรีเสริม',   'การตลาด',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-16 09:15:00'),
+(7,  'MKT-0007', 'นางสาวสุภาภรณ์  จ้อยวงศ์',      'การตลาด',           '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-17 09:00:00'),
+(8,  'MKT-0008', 'นางสาวรวิวรรณ  อนุตรี',         'การตลาด',   '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-17 09:20:00'),
+(9,  'MKT-0009', 'นางสาวจันทรรัตน์  อดิศรวรกิจ',   'การตลาด',           '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-18 09:00:00'),
+(10, 'MKT-0010', 'นางสาวอาจรีย์  ทุ่งราช',    'การตลาด',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-18 09:30:00'),
+(11, 'MKT-0011', 'นางสาวพุทธพร  พัดจีบ',    'การตลาด',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-18 09:30:00'),
+(12, 'MKT-0012', 'นางสาวนัชนก  ไชยแป้น',    'การตลาด',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-18 09:30:00'),
+(13, 'MKT-0013', 'นางสาวปานไพลิน  ปินใจ',    'การตลาด',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-18 09:30:00'),
+(14, 'MKT-0014', 'นางสาวธิษณา  ธัญญวิชยเวช',    'การตลาด',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-18 09:30:00'),
+(15, 'MKT-0015', 'นายวินัย  ลูกปัด',    'การตลาด',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-18 09:30:00'),
+(16, 'MKT-0016', 'นายชยพล  อุ่มเจริญ',    'การตลาด',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user',        '2024-01-18 09:30:00'),
+(17, 'test-0001', 'นายทดสอบระบบ',    'การตลาด',              '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'admin',        '2024-01-18 09:30:00');
 
-ALTER TABLE `users` MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=13;
+ALTER TABLE `users` MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=18;
 
 -- ────────────────────────────────────────────────────────────
 -- Table: leave_types
@@ -99,17 +106,6 @@ CREATE TABLE `leave_requests` (
   CONSTRAINT `leave_requests_ibfk_3` FOREIGN KEY (`approved_by`)   REFERENCES `users` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-INSERT INTO `leave_requests` (`id`, `user_id`, `leave_type_id`, `start_date`, `end_date`, `start_time`, `end_time`, `total_days`, `reason`, `status`, `approved_by`, `approved_at`, `created_at`) VALUES
-(1,  3, 1, '2025-01-15', '2025-01-17', NULL,       NULL,       3.00, 'ผ่าตัดเล็ก พักฟื้น',       'approved', 2, '2025-01-14 09:00:00', '2025-01-13 16:00:00'),
-(2,  3, 1, '2025-01-08', '2025-01-08', '13:00:00', '15:00:00', 0.25, 'ไปรับยาที่โรงพยาบาล',      'approved', 2, '2025-01-07 09:00:00', '2025-01-07 08:00:00'),
-(3,  4, 3, '2025-02-10', '2025-02-14', NULL,       NULL,       5.00, 'พักผ่อนกับครอบครัว',       'approved', 2, '2025-02-07 10:00:00', '2025-02-06 09:00:00'),
-(4,  5, 2, '2025-02-20', '2025-02-20', NULL,       NULL,       1.00, 'ธุระส่วนตัวที่ธนาคาร',     'approved', 2, '2025-02-19 11:00:00', '2025-02-18 15:00:00'),
-(5,  6, 1, '2025-03-03', '2025-03-05', NULL,       NULL,       3.00, 'ไม่สบาย มีไข้หวัดใหญ่',   'approved', 2, '2025-03-02 09:30:00', '2025-03-02 08:00:00'),
-(6,  7, 3, '2025-03-17', '2025-03-20', NULL,       NULL,       4.00, 'ท่องเที่ยวพักผ่อน',        'approved', 2, '2025-03-14 14:00:00', '2025-03-13 10:00:00'),
-(7,  3, 3, '2025-02-20', '2025-02-22', NULL,       NULL,       3.00, 'พักผ่อนประจำปี',           'approved', 2, '2025-02-18 10:00:00', '2025-02-17 08:30:00'),
-(8,  8, 1, '2025-03-10', '2025-03-10', '09:00:00', '12:00:00', 0.38, 'นัดหมอช่วงเช้า',           'approved', 2, '2025-03-09 08:00:00', '2025-03-08 17:00:00'),
-(9,  3, 2, '2025-03-25', '2025-03-25', NULL,       NULL,       1.00, 'ไปต่ออายุพาสปอร์ต',        'pending',  NULL, NULL,                '2025-03-20 11:15:00'),
-(10, 6, 2, '2025-04-01', '2025-04-01', NULL,       NULL,       1.00, 'ไปงานแต่งงานเพื่อน',       'pending',  NULL, NULL,                '2025-03-25 09:00:00');
 
 ALTER TABLE `leave_requests` MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=11;
 
@@ -131,16 +127,6 @@ CREATE TABLE `leave_approvals` (
   CONSTRAINT `leave_approvals_ibfk_2` FOREIGN KEY (`approver_id`)      REFERENCES `users` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- approver_id เปลี่ยนเป็น 2 (ประเสริฐ — admin) เพราะ id=1 เป็น super_admin แล้ว
-INSERT INTO `leave_approvals` (`id`, `leave_request_id`, `approver_id`, `status`, `comment`, `approved_at`) VALUES
-(1, 1, 2, 'approved', 'อนุมัติ ดูแลสุขภาพด้วยนะ',       '2025-01-14 09:00:00'),
-(2, 2, 2, 'approved', NULL,                               '2025-01-07 09:00:00'),
-(3, 3, 2, 'approved', NULL,                               '2025-02-07 10:00:00'),
-(4, 4, 2, 'approved', NULL,                               '2025-02-19 11:00:00'),
-(5, 5, 2, 'approved', 'อนุมัติ พักผ่อนให้หายดีก่อนนะ', '2025-03-02 09:30:00'),
-(6, 6, 2, 'approved', NULL,                               '2025-03-14 14:00:00'),
-(7, 7, 2, 'approved', NULL,                               '2025-02-18 10:00:00'),
-(8, 8, 2, 'approved', NULL,                               '2025-03-09 08:00:00');
 
 ALTER TABLE `leave_approvals` MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=9;
 
@@ -162,15 +148,6 @@ CREATE TABLE `leave_balances` (
   CONSTRAINT `leave_balances_ibfk_2` FOREIGN KEY (`leave_type_id`) REFERENCES `leave_types` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-INSERT INTO `leave_balances` (`id`, `user_id`, `leave_type_id`, `total_days`, `used_days`, `year`) VALUES
-(1,  3,  1, 30, 5, 2025), (2,  3,  2, 3,  1, 2025), (3,  3,  3, 10, 3, 2025), (4,  3,  4, 5,  0, 2025),
-(5,  4,  1, 30, 2, 2025), (6,  4,  2, 3,  0, 2025), (7,  4,  3, 10, 5, 2025), (8,  4,  4, 5,  1, 2025),
-(9,  5,  1, 30, 0, 2025), (10, 5,  2, 3,  1, 2025), (11, 5,  3, 10, 2, 2025), (12, 5,  4, 5,  0, 2025),
-(13, 6,  1, 30, 3, 2025), (14, 6,  2, 3,  2, 2025), (15, 6,  3, 10, 0, 2025), (16, 6,  4, 5,  0, 2025),
-(17, 7,  1, 30, 1, 2025), (18, 7,  2, 3,  0, 2025), (19, 7,  3, 10, 4, 2025), (20, 7,  4, 5,  2, 2025),
-(21, 8,  1, 30, 7, 2025), (22, 8,  2, 3,  1, 2025), (23, 8,  3, 10, 1, 2025), (24, 8,  4, 5,  0, 2025),
-(25, 9,  1, 30, 0, 2025), (26, 9,  2, 3,  0, 2025), (27, 9,  3, 10, 6, 2025), (28, 9,  4, 5,  0, 2025),
-(29, 10, 1, 30, 2, 2025), (30, 10, 2, 3,  1, 2025), (31, 10, 3, 10, 3, 2025), (32, 10, 4, 5,  1, 2025);
 
 ALTER TABLE `leave_balances` MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=33;
 
@@ -190,16 +167,6 @@ CREATE TABLE `user_leave_pool` (
   CONSTRAINT `user_leave_pool_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- seed pool รวมจาก leave_balances (sum ทุก leave_type ต่อ user ต่อปี)
-INSERT INTO `user_leave_pool` (`user_id`, `total_days`, `used_days`, `year`) VALUES
-(3,  48, 9,  2025),   -- 30+3+10+5=48 | used=5+1+3+0=9
-(4,  48, 8,  2025),   -- used=2+0+5+1=8
-(5,  48, 3,  2025),   -- used=0+1+2+0=3
-(6,  48, 5,  2025),   -- used=3+2+0+0=5
-(7,  48, 7,  2025),   -- used=1+0+4+2=7
-(8,  48, 9,  2025),   -- used=7+1+1+0=9
-(9,  48, 6,  2025),   -- used=0+0+6+0=6
-(10, 48, 7,  2025);   -- used=2+1+3+1=7
 
 -- ────────────────────────────────────────────────────────────
 -- Table: audit_logs  (immutable — ห้าม UPDATE/DELETE)
@@ -232,7 +199,7 @@ CREATE TABLE `audit_logs` (
 INSERT INTO `audit_logs` (`actor_id`, `actor_role`, `action`, `target_type`, `target_id`, `after_data`, `note`, `created_at`)
 SELECT
   la.`approver_id`,
-  'admin',
+  'manager',
   CASE la.`status` WHEN 'approved' THEN 'leave.approve' ELSE 'leave.reject' END,
   'leave_request',
   la.`leave_request_id`,
@@ -243,7 +210,7 @@ FROM `leave_approvals` la
 WHERE la.`approved_at` IS NOT NULL;
 
 -- ────────────────────────────────────────────────────────────
--- View: v_audit_logs  (super_admin ใช้ query)
+-- View: v_audit_logs  (manager ใช้ query)
 -- ────────────────────────────────────────────────────────────
 
 CREATE OR REPLACE VIEW `v_audit_logs` AS
@@ -265,6 +232,51 @@ SELECT
 FROM `audit_logs` al
 INNER JOIN `users` u ON u.`id` = al.`actor_id`
 ORDER BY al.`created_at` DESC;
+
+-- ────────────────────────────────────────────────────────────
+-- Table: ot_requests (For Overtime Management)
+-- ────────────────────────────────────────────────────────────
+
+CREATE TABLE `ot_requests` (
+  `id`            int(11)         NOT NULL AUTO_INCREMENT,
+  `user_id`       int(11)         NOT NULL,
+  `ot_date`       date            NOT NULL,
+  `start_time`    time            NOT NULL,
+  `end_time`      time            NOT NULL,
+  `total_hours`   decimal(5,2)    DEFAULT NULL,
+  `reason`        text            DEFAULT NULL,
+  `status`        enum('pending','approved','rejected') DEFAULT 'pending',
+  `approved_by`   int(11)         DEFAULT NULL,
+  `approved_at`   datetime        DEFAULT NULL,
+  `created_at`    timestamp       NOT NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`id`),
+  KEY `user_id`       (`user_id`),
+  KEY `approved_by`   (`approved_by`),
+  CONSTRAINT `ot_requests_ibfk_1` FOREIGN KEY (`user_id`)       REFERENCES `users` (`id`),
+  CONSTRAINT `ot_requests_ibfk_2` FOREIGN KEY (`approved_by`)   REFERENCES `users` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Sample data for ot_requests
+INSERT INTO `ot_requests` (`user_id`, `ot_date`, `start_time`, `end_time`, `total_hours`, `reason`, `status`) VALUES
+(3, '2025-04-10', '18:00:00', '21:00:00', 3.00, 'งานเร่งด่วนปิดงบประมาณ', 'pending');
+
+-- ────────────────────────────────────────────────────────────
+-- Table: ot_approvals
+-- ────────────────────────────────────────────────────────────
+
+CREATE TABLE `ot_approvals` (
+  `id`               int(11)  NOT NULL AUTO_INCREMENT,
+  `ot_request_id`    int(11)  DEFAULT NULL,
+  `approver_id`      int(11)  DEFAULT NULL,
+  `status`           enum('pending','approved','rejected') DEFAULT NULL,
+  `comment`          text     DEFAULT NULL,
+  `approved_at`      datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `ot_request_id` (`ot_request_id`),
+  KEY `approver_id`   (`approver_id`),
+  CONSTRAINT `ot_approvals_ibfk_1` FOREIGN KEY (`ot_request_id`) REFERENCES `ot_requests` (`id`),
+  CONSTRAINT `ot_approvals_ibfk_2` FOREIGN KEY (`approver_id`)   REFERENCES `users` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 COMMIT;
 
