@@ -294,9 +294,9 @@ router.patch("/users/:id/assign-subordinate", csrfProtect, async (req, res, next
 
     // If admin explicitly passes a supervisor_id, use it. Otherwise default to callerId if assigning.
     const explicitSupervisor = req.body.supervisor_id;
-    const newSupervisor = assign 
-        ? (callerRole === "admin" && explicitSupervisor !== undefined ? explicitSupervisor : callerId) 
-        : null;
+    const newSupervisor = assign
+      ? (callerRole === "admin" && explicitSupervisor !== undefined ? explicitSupervisor : callerId)
+      : null;
 
     await pool.query("UPDATE users SET supervisor_id = ? WHERE id = ?", [newSupervisor, userId]);
 
@@ -529,4 +529,71 @@ router.get("/reports/leave-summary", async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-export default router;
+// ── GET /api/admin/departments ────────────────────────────────
+router.get("/departments", async (req, res, next) => {
+    try {
+      const [rows] = await pool.query("SELECT * FROM departments ORDER BY name ASC");
+      res.json(rows);
+    } catch (err) { next(err); }
+  });
+
+  // ── POST /api/admin/departments ───────────────────────────────
+  router.post("/departments", csrfProtect, async (req, res, next) => {
+    try {
+      if (req.user.role !== "admin" && req.user.role !== "manager") {
+        return res.status(403).json({ message: "ไม่มีสิทธิ์ใช้งาน" });
+      }
+      const { name } = req.body;
+      if (!name) return res.status(400).json({ message: "กรุณาระบุชื่อแผนก" });
+
+      await pool.query("INSERT INTO departments (name) VALUES (?)", [name]);
+      res.json({ message: "เพิ่มแผนกเรียบร้อย" });
+    } catch (err) {
+      if (err.code === 'ER_DUP_ENTRY') {
+        return res.status(400).json({ message: "ชื่อแผนกนี้มีอยู่แล้ว" });
+      }
+      next(err);
+    }
+  });
+
+  // ── PUT /api/admin/departments/:id ────────────────────────────
+  router.put("/departments/:id", csrfProtect, async (req, res, next) => {
+    try {
+      if (req.user.role !== "admin" && req.user.role !== "manager") {
+        return res.status(403).json({ message: "ไม่มีสิทธิ์ใช้งาน" });
+      }
+      const { name } = req.body;
+      if (!name) return res.status(400).json({ message: "กรุณาระบุชื่อแผนก" });
+
+      await pool.query("UPDATE departments SET name = ? WHERE id = ?", [name, req.params.id]);
+      res.json({ message: "แก้ไขแผนกเรียบร้อย" });
+    } catch (err) {
+      if (err.code === 'ER_DUP_ENTRY') {
+        return res.status(400).json({ message: "ชื่อแผนกนี้มีอยู่แล้ว" });
+      }
+      next(err);
+    }
+  });
+
+  // ── DELETE /api/admin/departments/:id ─────────────────────────
+  router.delete("/departments/:id", csrfProtect, async (req, res, next) => {
+    try {
+      if (req.user.role !== "admin" && req.user.role !== "manager") {
+        return res.status(403).json({ message: "ไม่มีสิทธิ์ใช้งาน" });
+      }
+
+      // Check if any users are in this department
+      const [dept] = await pool.query("SELECT name FROM departments WHERE id = ?", [req.params.id]);
+      if (!dept[0]) return res.status(404).json({ message: "ไม่พบแผนก" });
+
+      const [users] = await pool.query("SELECT id FROM users WHERE department = ? LIMIT 1", [dept[0].name]);
+      if (users.length > 0) {
+        return res.status(400).json({ message: "ไม่สามารถลบแผนกที่มีพนักงานสังกัดอยู่ได้" });
+      }
+
+      await pool.query("DELETE FROM departments WHERE id = ?", [req.params.id]);
+      res.json({ message: "ลบแผนกเรียบร้อย" });
+    } catch (err) { next(err); }
+  });
+
+  export default router;
