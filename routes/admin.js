@@ -172,9 +172,20 @@ router.patch("/leave-requests/:id/approve", csrfProtect, async (req, res, next) 
         [approverId, now, requestId]
       );
       const year = new Date(rows[0].start_date).getFullYear();
+      const leaveTypeId = rows[0].leave_type_id;
+
+      // Update global pool
       await conn.query(
         `UPDATE user_leave_pool SET used_days = used_days + ? WHERE user_id = ? AND year = ?`,
         [rows[0].total_days, rows[0].user_id, year]
+      );
+
+      // Update per-type balance
+      await conn.query(
+        `INSERT INTO leave_balances (user_id, leave_type_id, total_days, used_days, year)
+         SELECT ?, ?, max_days, ?, ? FROM leave_types WHERE id = ?
+         ON DUPLICATE KEY UPDATE used_days = used_days + ?`,
+        [rows[0].user_id, leaveTypeId, rows[0].total_days, year, leaveTypeId, rows[0].total_days]
       );
     } else {
       // ส่งต่อไปยัง role ถัดไปใน chain
@@ -375,19 +386,42 @@ router.patch("/users/:id/assign-subordinate", csrfProtect, async (req, res, next
 router.get("/leave-pool/:user_id", async (req, res, next) => {
   try {
     const year = req.query.year ?? new Date().getFullYear();
-    const [uRows] = await pool.query("SELECT department FROM users WHERE id = ? LIMIT 1", [req.params.user_id]);
+    const userId = req.params.user_id;
+
+    const [uRows] = await pool.query("SELECT department FROM users WHERE id = ? LIMIT 1", [userId]);
     if (!uRows[0]) return res.status(404).json({ message: "ไม่พบผู้ใช้งาน" });
     if (!assertSameDept(req, res, uRows[0].department)) return;
 
-    const [rows] = await pool.query(
+    // 1. ดึง pool รวม
+    const [pRows] = await pool.query(
       "SELECT * FROM user_leave_pool WHERE user_id = ? AND year = ? LIMIT 1",
-      [req.params.user_id, year]
+      [userId, year]
     );
-    const r = rows[0];
-    if (!r) {
-      return res.json({ id: null, user_id: Number(req.params.user_id), total_days: 0, used_days: 0, remaining: 0, year: Number(year) });
-    }
-    res.json({ ...r, remaining: Math.max(0, r.total_days - r.used_days) });
+    const poolData = pRows[0] || { id: null, user_id: Number(userId), total_days: 0, used_days: 0, year: Number(year) };
+    
+    // 2. ดึงแยกตามประเภท
+    const [bRows] = await pool.query(
+      `SELECT lt.id AS leave_type_id, lt.name, lt.max_days AS default_max,
+              lb.total_days, lb.used_days
+       FROM leave_types lt
+       LEFT JOIN leave_balances lb ON lb.leave_type_id = lt.id AND lb.user_id = ? AND lb.year = ?
+       ORDER BY lt.id ASC`,
+      [userId, year]
+    );
+
+    const balances = bRows.map(b => ({
+      leave_type_id: b.leave_type_id,
+      name: b.name,
+      total_days: b.total_days ?? b.default_max,
+      used_days: b.used_days ?? 0,
+      remaining: Math.max(0, (b.total_days ?? b.default_max) - (b.used_days ?? 0))
+    }));
+
+    res.json({
+      ...poolData,
+      remaining: Math.max(0, poolData.total_days - poolData.used_days),
+      balances
+    });
   } catch (err) { next(err); }
 });
 
@@ -395,37 +429,78 @@ router.get("/leave-pool/:user_id", async (req, res, next) => {
 router.patch("/leave-pool/:user_id", csrfProtect, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const { remaining_days, year } = req.body;
+    const { balances, year } = req.body; // balances: [{ leave_type_id, total_days }]
     const userId = req.params.user_id;
 
-    if (remaining_days === undefined || !year) return res.status(400).json({ message: "กรุณากรอกข้อมูลให้ครบถ้วน" });
-    if (remaining_days < 0) return res.status(400).json({ message: "วันลาคงเหลือต้องไม่ติดลบ" });
+    if (!balances || !Array.isArray(balances) || !year) {
+      return res.status(400).json({ message: "กรุณากรอกข้อมูลให้ครบถ้วน" });
+    }
 
     const [uRows] = await conn.query("SELECT department FROM users WHERE id = ? LIMIT 1", [userId]);
     if (!uRows[0]) return res.status(404).json({ message: "ไม่พบผู้ใช้งาน" });
     if (!assertSameDept(req, res, uRows[0].department)) return;
 
-    const [existing] = await conn.query("SELECT total_days, used_days FROM user_leave_pool WHERE user_id = ? AND year = ? LIMIT 1", [userId, year]);
-    const before = existing[0] ?? null;
-    const used_days = before?.used_days ?? 0;
-    const total_days = parseFloat(remaining_days) + parseFloat(used_days);
-
     await conn.beginTransaction();
+
+    let totalGlobalDays = 0;
+    let totalGlobalUsed = 0;
+
+    for (const b of balances) {
+      const [existing] = await conn.query(
+        "SELECT used_days FROM leave_balances WHERE user_id = ? AND leave_type_id = ? AND year = ? LIMIT 1",
+        [userId, b.leave_type_id, year]
+      );
+      const used = existing[0]?.used_days ?? 0;
+      await conn.query(
+        `INSERT INTO leave_balances (user_id, leave_type_id, total_days, used_days, year)
+         VALUES (?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE total_days = ?`,
+        [userId, b.leave_type_id, b.total_days, used, year, b.total_days]
+      );
+      totalGlobalDays += parseFloat(b.total_days);
+      totalGlobalUsed += parseFloat(used);
+    }
+
+    // อัปเดต user_leave_pool ให้ตรงกัน (Optional: ถ้าอยากให้ pool รวมสะท้อนยอดรวมทั้งหมด)
     await conn.query(
       `INSERT INTO user_leave_pool (user_id, total_days, used_days, year)
-       VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE total_days = ?`,
-      [userId, total_days, used_days, year, total_days]
+       VALUES (?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE total_days = ?`,
+      [userId, totalGlobalDays, totalGlobalUsed, year, totalGlobalDays]
     );
+
     await conn.commit();
 
     await logAudit({
-      req, action: "balance.update", targetType: "leave_balance", targetId: Number(userId),
-      before: before ? { total_days: before.total_days, used_days: before.used_days } : null,
-      after: { total_days, used_days }, note: `แก้ไขวันลาคงเหลือ ${remaining_days} วัน`,
+      req, action: "balance.update_multiple", targetType: "leave_balance", targetId: Number(userId),
+      after: { balances, totalGlobalDays }, note: `แก้ไขวันลาแยกประเภท ปี ${year}`,
     });
 
-    const [rows] = await pool.query("SELECT * FROM user_leave_pool WHERE user_id = ? AND year = ? LIMIT 1", [userId, year]);
-    res.json({ ...rows[0], remaining: Math.max(0, rows[0].total_days - rows[0].used_days) });
+    // ดึงข้อมูลกลับไปส่ง response
+    const [pRows] = await pool.query(
+      "SELECT * FROM user_leave_pool WHERE user_id = ? AND year = ? LIMIT 1",
+      [userId, year]
+    );
+    const [bRows] = await pool.query(
+      `SELECT lt.id AS leave_type_id, lt.name, lb.total_days, lb.used_days
+       FROM leave_types lt
+       LEFT JOIN leave_balances lb ON lb.leave_type_id = lt.id AND lb.user_id = ? AND lb.year = ?
+       ORDER BY lt.id ASC`,
+      [userId, year]
+    );
+    const updatedBalances = bRows.map(b => ({
+      leave_type_id: b.leave_type_id,
+      name: b.name,
+      total_days: b.total_days ?? 0,
+      used_days: b.used_days ?? 0,
+      remaining: Math.max(0, (b.total_days ?? 0) - (b.used_days ?? 0))
+    }));
+
+    res.json({
+      ...pRows[0],
+      remaining: Math.max(0, pRows[0].total_days - pRows[0].used_days),
+      balances: updatedBalances
+    });
   } catch (err) {
     await conn.rollback(); next(err);
   } finally { conn.release(); }

@@ -187,30 +187,22 @@ router.post("/", authenticate, csrfProtect, async (req, res, next) => {
 
     const year = new Date(start_date).getFullYear();
 
-    const [poolRows] = await conn.query(
-      "SELECT * FROM user_leave_pool WHERE user_id = ? AND year = ? LIMIT 1",
-      [req.user.id, year]
+    const [balRows] = await conn.query(
+      `SELECT * FROM leave_balances
+       WHERE user_id = ? AND leave_type_id = ? AND year = ?
+       LIMIT 1`,
+      [req.user.id, leave_type_id, year]
     );
-    let userPool = poolRows[0];
+    let currentBalance = balRows[0];
 
-    if (!userPool) {
-      await conn.query(
-        `INSERT INTO user_leave_pool (user_id, total_days, used_days, year)
-         VALUES (?, 15, 0, ?)
-         ON DUPLICATE KEY UPDATE id = id`,
-        [req.user.id, year]
-      );
-      const [newPool] = await conn.query(
-        "SELECT * FROM user_leave_pool WHERE user_id = ? AND year = ? LIMIT 1",
-        [req.user.id, year]
-      );
-      userPool = newPool[0];
-    }
+    // ถ้ายังไม่มี row ใน leave_balances → ใช้ค่า default จาก leave_types
+    const maxAllowed = currentBalance ? parseFloat(currentBalance.total_days) : parseFloat(types[0].max_days);
+    const used = currentBalance ? parseFloat(currentBalance.used_days) : 0;
+    const remaining = maxAllowed - used;
 
-    const remaining = parseFloat(userPool.total_days) - parseFloat(userPool.used_days);
     if (remaining < totalDaysToSave) {
       return res.status(400).json({
-        message: `วันลาคงเหลือไม่เพียงพอ (คงเหลือ ${remaining} วัน ต้องการ ${totalDaysToSave} วัน)`,
+        message: `วันลา${types[0].name}คงเหลือไม่เพียงพอ (คงเหลือ ${remaining} วัน ต้องการ ${totalDaysToSave} วัน)`,
       });
     }
 
@@ -291,6 +283,12 @@ router.post("/", authenticate, csrfProtect, async (req, res, next) => {
          SET used_days = used_days + ?
          WHERE user_id = ? AND year = ?`,
         [totalDaysToSave, req.user.id, year]
+      );
+      await conn.query(
+        `INSERT INTO leave_balances (user_id, leave_type_id, total_days, used_days, year)
+         VALUES (?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE used_days = used_days + ?`,
+        [req.user.id, leave_type_id, maxAllowed, totalDaysToSave, year, totalDaysToSave]
       );
     }
 
