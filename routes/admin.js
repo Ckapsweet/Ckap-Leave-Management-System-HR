@@ -27,6 +27,9 @@ function mapRow(r) {
       department: r.department,
       role: r.user_role,
       supervisor_id: r.supervisor_id,
+      email: r.email,
+      email_2: r.email_2,
+      phone: r.phone,
     },
     leave_type: {
       id: r.leave_type_id,
@@ -100,6 +103,7 @@ router.get("/leave-requests", async (req, res, next) => {
 
     let sql = `
       SELECT lr.*, u.full_name AS user_full_name, u.employee_code, u.department, u.role AS user_role, u.supervisor_id,
+             u.email, u.email_2, u.phone,
              lt.name AS leave_type_name, lt.max_days AS leave_type_max_days,
              approver.full_name AS approver_name, la.comment
       FROM leave_requests lr
@@ -307,17 +311,17 @@ router.patch("/leave-requests/:id/reject", csrfProtect, async (req, res, next) =
 // ── GET /api/admin/users ──────────────────────────────────────
 router.get("/users", async (req, res, next) => {
   try {
-    let sql = `SELECT id, employee_code, full_name, department, role, supervisor_id, created_at FROM users`;
-    const params = [];
+    let sql = `SELECT id, employee_code, full_name, department, role, supervisor_id, email, email_2, phone, created_at FROM users`;
+    const where = ["id != ?"];
+    const params = [req.user.id];
 
     if (req.user.role === "lead") {
-      sql += " WHERE id != ? AND role = 'user'";
-      params.push(req.user.id);
+      where.push("role = 'user'");
     } else if (req.user.role === "assistant manager") {
-      sql += " WHERE id != ? AND role = 'lead'";
-      params.push(req.user.id);
+      where.push("role = 'lead'");
     }
-    // manager และ admin เห็นทุกคน
+    // manager และ admin เห็นทุกคน ยกเว้นตัวเอง
+    sql += ` WHERE ${where.join(" AND ")}`;
     sql += " ORDER BY id ASC";
 
     const [rows] = await pool.query(sql, params);

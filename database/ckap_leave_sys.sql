@@ -47,6 +47,9 @@ CREATE TABLE `users` (
   `password`      varchar(255) DEFAULT NULL,
   `role`          enum('user','lead','assistant manager','manager', 'admin') NOT NULL DEFAULT 'user',
   `supervisor_id` int(11)      DEFAULT NULL,
+  `email`         varchar(255) DEFAULT NULL,
+  `email_2`       varchar(255) DEFAULT NULL,
+  `phone`         varchar(50)  DEFAULT NULL,
   `created_at`    timestamp    NOT NULL DEFAULT current_timestamp(),
   PRIMARY KEY (`id`),
   CONSTRAINT `fk_user_supervisor` FOREIGN KEY (`supervisor_id`) REFERENCES `users` (`id`)

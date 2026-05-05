@@ -4,11 +4,35 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { v4 as uuidv4 } from "uuid";
 import pool from "../config/db.js";
-import { authenticate } from "../middleware/auth.js";
+import { authenticate, csrfProtect } from "../middleware/auth.js";
 
 const router = Router();
 
 const IS_PROD = process.env.NODE_ENV === "production";
+
+function toPublicUser(user) {
+  return {
+    id: user.id,
+    employee_code: user.employee_code,
+    full_name: user.full_name,
+    department: user.department,
+    role: user.role,
+    supervisor_id: user.supervisor_id ?? null,
+    email: user.email ?? null,
+    email_2: user.email_2 ?? null,
+    phone: user.phone ?? null,
+  };
+}
+
+function cleanOptional(value) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+function isValidEmail(value) {
+  return !value || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
 
 // ── helpers — ตั้งค่า cookie ─────────────────────────────────
 function setAuthCookies(res, jwtToken, csrfToken) {
@@ -63,15 +87,7 @@ router.post("/login", async (req, res, next) => {
     setAuthCookies(res, jwtToken, csrfToken);
 
     // ไม่ส่ง token กลับใน body — ส่งแค่ข้อมูล user
-    res.json({
-      user: {
-        id: user.id,
-        employee_code: user.employee_code,
-        full_name: user.full_name,
-        department: user.department,
-        role: user.role,
-      },
-    });
+    res.json({ user: toPublicUser(user) });
   } catch (err) {
     next(err);
   }
@@ -87,11 +103,41 @@ router.post("/logout", (req, res) => {
 router.get("/me", authenticate, async (req, res, next) => {
   try {
     const [rows] = await pool.query(
-      "SELECT id, employee_code, full_name, department, role FROM users WHERE id = ? LIMIT 1",
+      "SELECT id, employee_code, full_name, department, role, supervisor_id, email, email_2, phone FROM users WHERE id = ? LIMIT 1",
       [req.user.id]
     );
     if (!rows[0]) return res.status(404).json({ message: "ไม่พบผู้ใช้งาน" });
     res.json(rows[0]);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── PUT /api/auth/profile ─────────────────────────────────────
+router.put("/profile", authenticate, csrfProtect, async (req, res, next) => {
+  try {
+    const fullName = typeof req.body.full_name === "string" ? req.body.full_name.trim() : "";
+    const email = cleanOptional(req.body.email);
+    const email2 = cleanOptional(req.body.email_2);
+    const phone = cleanOptional(req.body.phone);
+
+    if (!fullName) return res.status(400).json({ message: "กรุณาระบุชื่อ-นามสกุล" });
+    if (!isValidEmail(email) || !isValidEmail(email2)) {
+      return res.status(400).json({ message: "รูปแบบอีเมลไม่ถูกต้อง" });
+    }
+
+    await pool.query(
+      "UPDATE users SET full_name = ?, email = ?, email_2 = ?, phone = ? WHERE id = ?",
+      [fullName, email, email2, phone, req.user.id]
+    );
+
+    const [rows] = await pool.query(
+      "SELECT id, employee_code, full_name, department, role, supervisor_id, email, email_2, phone FROM users WHERE id = ? LIMIT 1",
+      [req.user.id]
+    );
+    if (!rows[0]) return res.status(404).json({ message: "ไม่พบผู้ใช้งาน" });
+
+    res.json(toPublicUser(rows[0]));
   } catch (err) {
     next(err);
   }

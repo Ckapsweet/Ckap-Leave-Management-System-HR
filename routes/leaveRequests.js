@@ -34,6 +34,7 @@ router.get("/today", authenticate, async (req, res, next) => {
     const today = new Date().toISOString().split("T")[0];
     const [rows] = await pool.query(
       `SELECT lr.*, u.full_name AS user_name, u.department AS user_department,
+              u.email AS user_email, u.email_2 AS user_email_2, u.phone AS user_phone,
               lt.name AS leave_type_name, lt.description AS leave_type_description,
               lt.max_days AS leave_type_max_days
        FROM leave_requests lr
@@ -51,6 +52,9 @@ router.get("/today", authenticate, async (req, res, next) => {
         id: r.user_id,
         full_name: r.user_name,
         department: r.user_department,
+        email: r.user_email,
+        email_2: r.user_email_2,
+        phone: r.user_phone,
       },
     })));
   } catch (err) { next(err); }
@@ -68,6 +72,7 @@ router.get("/week", authenticate, async (req, res, next) => {
 
     const [rows] = await pool.query(
       `SELECT lr.*, u.full_name AS user_name, u.department AS user_department,
+              u.email AS user_email, u.email_2 AS user_email_2, u.phone AS user_phone,
               lt.name AS leave_type_name, lt.description AS leave_type_description,
               lt.max_days AS leave_type_max_days
        FROM leave_requests lr
@@ -87,6 +92,9 @@ router.get("/week", authenticate, async (req, res, next) => {
         id: r.user_id,
         full_name: r.user_name,
         department: r.user_department,
+        email: r.user_email,
+        email_2: r.user_email_2,
+        phone: r.user_phone,
       },
     })));
   } catch (err) { next(err); }
