@@ -1,8 +1,11 @@
 // routes/leaveRequests.js
 import { Router } from "express";
+import fs from "fs/promises";
+import path from "path";
 import pool from "../config/db.js";
 import { authenticate, csrfProtect } from "../middleware/auth.js";
 import { logAudit } from "../middleware/audit.js";
+import { leaveAttachmentDir, normalizeOriginalName, uploadLeaveAttachments } from "../middleware/upload.js";
 
 const router = Router();
 
@@ -26,6 +29,45 @@ function mapRow(r) {
       max_days: r.leave_type_max_days,
     },
   };
+}
+
+function attachmentUrl(id) {
+  return `/api/leave-requests/attachments/${id}`;
+}
+
+async function attachFiles(rows) {
+  if (!rows.length) return rows;
+  const ids = rows.map((r) => r.id);
+  const [files] = await pool.query(
+    `SELECT id, leave_request_id, original_name, stored_name, mime_type, size
+     FROM leave_request_attachments
+     WHERE leave_request_id IN (?)
+     ORDER BY id ASC`,
+    [ids]
+  );
+  const byRequest = new Map();
+  files.forEach((file) => {
+    const item = {
+      id: file.id,
+      original_name: file.original_name,
+      file_name: file.original_name,
+      mime_type: file.mime_type,
+      size: file.size,
+      url: attachmentUrl(file.id),
+    };
+    byRequest.set(file.leave_request_id, [...(byRequest.get(file.leave_request_id) ?? []), item]);
+  });
+  return rows.map((row) => ({ ...row, attachments: byRequest.get(row.id) ?? [] }));
+}
+
+async function canAccessAttachment(req, leaveRequest) {
+  if (leaveRequest.user_id === req.user.id) return true;
+  if (req.user.role === "admin") return true;
+  if (req.user.role === "manager") return req.user.department === leaveRequest.department;
+  if (["lead", "assistant manager"].includes(req.user.role)) {
+    return leaveRequest.supervisor_id === req.user.id || leaveRequest.current_assignee_id === req.user.id;
+  }
+  return false;
 }
 
 // ── GET /api/leave-requests/today ─────────────────────────────
@@ -114,7 +156,7 @@ router.get("/my", authenticate, async (req, res, next) => {
        ORDER BY lr.created_at DESC`,
       [req.user.id]
     );
-    res.json(rows.map(mapRow));
+    res.json(await attachFiles(rows.map(mapRow)));
   } catch (err) { next(err); }
 });
 
@@ -181,6 +223,34 @@ router.get("/report/yearly", authenticate, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// ── GET /api/leave-requests/attachments/:attachmentId ──────────
+router.get("/attachments/:attachmentId", authenticate, async (req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT lra.*, lr.user_id, lr.current_assignee_id, u.department, u.supervisor_id
+       FROM leave_request_attachments lra
+       JOIN leave_requests lr ON lr.id = lra.leave_request_id
+       JOIN users u ON u.id = lr.user_id
+       WHERE lra.id = ?
+       LIMIT 1`,
+      [req.params.attachmentId]
+    );
+    const file = rows[0];
+    if (!file) return res.status(404).json({ message: "ไม่พบไฟล์แนบ" });
+    if (!(await canAccessAttachment(req, file))) {
+      return res.status(403).json({ message: "ไม่มีสิทธิ์เข้าถึงไฟล์แนบ" });
+    }
+
+    const filePath = path.resolve(leaveAttachmentDir, file.stored_name);
+    if (!filePath.startsWith(leaveAttachmentDir)) {
+      return res.status(400).json({ message: "ไฟล์แนบไม่ถูกต้อง" });
+    }
+    res.type(file.mime_type);
+    res.setHeader("Content-Disposition", `inline; filename*=UTF-8''${encodeURIComponent(file.original_name)}`);
+    res.sendFile(filePath);
+  } catch (err) { next(err); }
+});
+
 // ── GET /api/leave-requests/:id ───────────────────────────────
 router.get("/:id", authenticate, async (req, res, next) => {
   try {
@@ -195,12 +265,13 @@ router.get("/:id", authenticate, async (req, res, next) => {
       [req.params.id, req.user.id]
     );
     if (!rows[0]) return res.status(404).json({ message: "ไม่พบคำขอลา" });
-    res.json(mapRow(rows[0]));
+    const [mapped] = await attachFiles([mapRow(rows[0])]);
+    res.json(mapped);
   } catch (err) { next(err); }
 });
 
 // ── POST /api/leave-requests ──────────────────────────────────
-router.post("/", authenticate, csrfProtect, async (req, res, next) => {
+router.post("/", authenticate, csrfProtect, uploadLeaveAttachments.array("attachments", 10), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     console.log("[POST /leave-requests] body:", req.body);
@@ -213,6 +284,7 @@ router.post("/", authenticate, csrfProtect, async (req, res, next) => {
       end_time = null,
       total_days = 0,
       total_hours = null,
+      request_type = "leave",
       reason,
     } = req.body;
 
@@ -312,10 +384,26 @@ router.post("/", authenticate, csrfProtect, async (req, res, next) => {
 
     const [result] = await conn.query(
       `INSERT INTO leave_requests
-         (user_id, leave_type_id, start_date, end_date, start_time, end_time, total_days, reason, status, approved_by, approved_at, current_assignee_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [req.user.id, leave_type_id, start_date, end_date, start_time, end_time, totalDaysToSave, reason, finalStatus, approvedBy, approvedAt, assigneeId]
+         (user_id, leave_type_id, start_date, end_date, start_time, end_time, total_days, request_type, reason, status, approved_by, approved_at, current_assignee_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [req.user.id, leave_type_id, start_date, end_date, start_time, end_time, totalDaysToSave, request_type, reason, finalStatus, approvedBy, approvedAt, assigneeId]
     );
+
+    if (req.files?.length) {
+      const values = req.files.map((file) => [
+        result.insertId,
+        normalizeOriginalName(file.originalname),
+        file.filename,
+        file.mimetype,
+        file.size,
+      ]);
+      await conn.query(
+        `INSERT INTO leave_request_attachments
+           (leave_request_id, original_name, stored_name, mime_type, size)
+         VALUES ?`,
+        [values]
+      );
+    }
 
     if (isAutoApprove) {
       await conn.query(
@@ -360,8 +448,10 @@ router.post("/", authenticate, csrfProtect, async (req, res, next) => {
         start_time,
         end_time,
         total_days: totalDaysToSave,
+        request_type,
         reason,
         status: finalStatus,
+        attachments: req.files?.map((file) => ({ original_name: normalizeOriginalName(file.originalname), mime_type: file.mimetype, size: file.size })) ?? [],
       },
     });
 
@@ -369,6 +459,11 @@ router.post("/", authenticate, csrfProtect, async (req, res, next) => {
   } catch (err) {
     console.error("[POST /leave-requests] error:", err.message, err.sqlMessage ?? "");
     await conn.rollback();
+    if (req.files?.length) {
+      await Promise.allSettled(
+        req.files.map((file) => fs.unlink(path.resolve(leaveAttachmentDir, file.filename)))
+      );
+    }
     next(err);
   } finally { conn.release(); }
 });
@@ -385,7 +480,16 @@ router.delete("/:id", authenticate, csrfProtect, async (req, res, next) => {
       return res.status(400).json({ message: "ยกเลิกได้เฉพาะคำขอที่ยังรออนุมัติ" });
     }
 
+    const [files] = await pool.query(
+      "SELECT stored_name FROM leave_request_attachments WHERE leave_request_id = ?",
+      [req.params.id]
+    );
+
     await pool.query("DELETE FROM leave_requests WHERE id = ?", [req.params.id]);
+
+    await Promise.allSettled(
+      files.map((file) => fs.unlink(path.resolve(leaveAttachmentDir, file.stored_name)))
+    );
 
     await logAudit({
       req,

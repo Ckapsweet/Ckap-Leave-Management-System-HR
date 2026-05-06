@@ -39,6 +39,35 @@ function mapRow(r) {
   };
 }
 
+function attachmentUrl(id) {
+  return `/api/leave-requests/attachments/${id}`;
+}
+
+async function attachLeaveFiles(rows) {
+  if (!rows.length) return rows;
+  const ids = rows.map((r) => r.id);
+  const [files] = await pool.query(
+    `SELECT id, leave_request_id, original_name, mime_type, size
+     FROM leave_request_attachments
+     WHERE leave_request_id IN (?)
+     ORDER BY id ASC`,
+    [ids]
+  );
+  const byRequest = new Map();
+  files.forEach((file) => {
+    const item = {
+      id: file.id,
+      original_name: file.original_name,
+      file_name: file.original_name,
+      mime_type: file.mime_type,
+      size: file.size,
+      url: attachmentUrl(file.id),
+    };
+    byRequest.set(file.leave_request_id, [...(byRequest.get(file.leave_request_id) ?? []), item]);
+  });
+  return rows.map((row) => ({ ...row, attachments: byRequest.get(row.id) ?? [] }));
+}
+
 function assertSameDept(req, res, dept) {
   if (req.user.role === "admin" || req.user.role === "manager") return true;
 
@@ -130,7 +159,7 @@ router.get("/leave-requests", async (req, res, next) => {
     sql += " ORDER BY lr.created_at DESC";
 
     const [rows] = await pool.query(sql, params);
-    res.json(rows.map(mapRow));
+    res.json(await attachLeaveFiles(rows.map(mapRow)));
   } catch (err) { next(err); }
 });
 
