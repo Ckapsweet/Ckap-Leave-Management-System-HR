@@ -3,6 +3,7 @@ import { Router } from "express";
 import pool from "../config/db.js";
 import { authenticate, requireAdmin, csrfProtect } from "../middleware/auth.js";
 import { logAudit } from "../middleware/audit.js";
+import { notifyLeaveRequestForwarded, notifyLeaveRequestResolved } from "../services/mailService.js";
 
 const router = Router();
 router.use(authenticate, requireAdmin);
@@ -172,9 +173,13 @@ router.patch("/leave-requests/:id/approve", csrfProtect, async (req, res, next) 
     const approverId = req.user.id;
 
     const [rows] = await conn.query(
-      `SELECT lr.*, u.department AS user_dept, u.supervisor_id AS user_supervisor_id
+      `SELECT lr.*, u.department AS user_dept, u.supervisor_id AS user_supervisor_id,
+              u.full_name AS requester_full_name, u.employee_code AS requester_employee_code,
+              u.email AS requester_email, u.email_2 AS requester_email_2,
+              lt.name AS leave_type_name
        FROM leave_requests lr
        JOIN users u ON lr.user_id = u.id
+       JOIN leave_types lt ON lt.id = lr.leave_type_id
        WHERE lr.id = ? LIMIT 1`,
       [requestId]
     );
@@ -258,6 +263,39 @@ router.patch("/leave-requests/:id/approve", csrfProtect, async (req, res, next) 
       conn,
     });
 
+    const [[approver]] = await pool.query(
+      "SELECT full_name, employee_code, email, email_2 FROM users WHERE id = ? LIMIT 1",
+      [approverId]
+    );
+    const requester = {
+      full_name: rows[0].requester_full_name,
+      employee_code: rows[0].requester_employee_code,
+      email: rows[0].requester_email,
+      email_2: rows[0].requester_email_2,
+    };
+
+    if (isFinalApproval) {
+      await notifyLeaveRequestResolved({
+        leaveRequest: rows[0],
+        requester,
+        approver,
+        status: "approved",
+        comment,
+      });
+    } else if (nextAssigneeForResponse) {
+      const [[assignee]] = await pool.query(
+        "SELECT full_name, employee_code, email, email_2 FROM users WHERE id = ? LIMIT 1",
+        [nextAssigneeForResponse]
+      );
+      await notifyLeaveRequestForwarded({
+        leaveRequest: rows[0],
+        requester,
+        assignee,
+        approver,
+        comment,
+      });
+    }
+
     res.json({
       message: isFinalApproval ? "อนุมัติคำขอลาเรียบร้อย" : "รับทราบและส่งต่อคำขอเรียบร้อย",
       status: isFinalApproval ? "approved" : "pending",
@@ -278,9 +316,13 @@ router.patch("/leave-requests/:id/reject", csrfProtect, async (req, res, next) =
     const approverId = req.user.id;
 
     const [rows] = await conn.query(
-      `SELECT lr.*, u.department AS user_dept, u.supervisor_id AS user_supervisor_id
+      `SELECT lr.*, u.department AS user_dept, u.supervisor_id AS user_supervisor_id,
+              u.full_name AS requester_full_name, u.employee_code AS requester_employee_code,
+              u.email AS requester_email, u.email_2 AS requester_email_2,
+              lt.name AS leave_type_name
        FROM leave_requests lr
        JOIN users u ON lr.user_id = u.id
+       JOIN leave_types lt ON lt.id = lr.leave_type_id
        WHERE lr.id = ? LIMIT 1`,
       [requestId]
     );
@@ -324,6 +366,23 @@ router.patch("/leave-requests/:id/reject", csrfProtect, async (req, res, next) =
       after: { status: "rejected", approved_by: approverId, approved_at: now, comment: comment ?? null },
       note: comment ?? null,
       conn,
+    });
+
+    const [[approver]] = await pool.query(
+      "SELECT full_name, employee_code, email, email_2 FROM users WHERE id = ? LIMIT 1",
+      [approverId]
+    );
+    await notifyLeaveRequestResolved({
+      leaveRequest: rows[0],
+      requester: {
+        full_name: rows[0].requester_full_name,
+        employee_code: rows[0].requester_employee_code,
+        email: rows[0].requester_email,
+        email_2: rows[0].requester_email_2,
+      },
+      approver,
+      status: "rejected",
+      comment,
     });
 
     res.json({

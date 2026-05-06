@@ -6,6 +6,7 @@ import pool from "../config/db.js";
 import { authenticate, csrfProtect } from "../middleware/auth.js";
 import { logAudit } from "../middleware/audit.js";
 import { leaveAttachmentDir, normalizeOriginalName, uploadLeaveAttachments } from "../middleware/upload.js";
+import { notifyLeaveRequestCreated, notifyLeaveRequestResolved } from "../services/mailService.js";
 
 const router = Router();
 
@@ -429,12 +430,35 @@ router.post("/", authenticate, csrfProtect, uploadLeaveAttachments.array("attach
 
     const [rows] = await pool.query(
       `SELECT lr.*, lt.name AS leave_type_name, lt.description AS leave_type_description,
-              lt.max_days AS leave_type_max_days
-       FROM leave_requests lr JOIN leave_types lt ON lr.leave_type_id = lt.id
+              lt.max_days AS leave_type_max_days,
+              requester.full_name AS requester_full_name,
+              requester.employee_code AS requester_employee_code,
+              requester.email AS requester_email,
+              requester.email_2 AS requester_email_2,
+              assignee.full_name AS assignee_full_name,
+              assignee.employee_code AS assignee_employee_code,
+              assignee.email AS assignee_email,
+              assignee.email_2 AS assignee_email_2
+       FROM leave_requests lr
+       JOIN leave_types lt ON lr.leave_type_id = lt.id
+       JOIN users requester ON requester.id = lr.user_id
+       LEFT JOIN users assignee ON assignee.id = lr.current_assignee_id
        WHERE lr.id = ?`,
       [result.insertId]
     );
     const created = mapRow(rows[0]);
+    const requester = {
+      full_name: rows[0].requester_full_name,
+      employee_code: rows[0].requester_employee_code,
+      email: rows[0].requester_email,
+      email_2: rows[0].requester_email_2,
+    };
+    const assignee = rows[0].assignee_employee_code ? {
+      full_name: rows[0].assignee_full_name,
+      employee_code: rows[0].assignee_employee_code,
+      email: rows[0].assignee_email,
+      email_2: rows[0].assignee_email_2,
+    } : null;
 
     await logAudit({
       req,
@@ -454,6 +478,22 @@ router.post("/", authenticate, csrfProtect, uploadLeaveAttachments.array("attach
         attachments: req.files?.map((file) => ({ original_name: normalizeOriginalName(file.originalname), mime_type: file.mimetype, size: file.size })) ?? [],
       },
     });
+
+    if (isAutoApprove) {
+      await notifyLeaveRequestResolved({
+        leaveRequest: rows[0],
+        requester,
+        approver: requester,
+        status: "approved",
+        comment: "Auto approved by manager role",
+      });
+    } else {
+      await notifyLeaveRequestCreated({
+        leaveRequest: rows[0],
+        requester,
+        assignee,
+      });
+    }
 
     res.status(201).json(created);
   } catch (err) {
