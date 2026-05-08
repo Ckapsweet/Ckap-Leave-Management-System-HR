@@ -125,6 +125,38 @@ router.patch("/users/:id/role", csrfProtect, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+router.patch("/users/:id/password", csrfProtect, async (req, res, next) => {
+  try {
+    if (req.user.role !== "admin") {
+      return res.status(403).json({ message: "เฉพาะ Admin เท่านั้นที่สามารถ reset password ได้" });
+    }
+
+    const { password } = req.body;
+    if (!password || String(password).length < 6) {
+      return res.status(400).json({ message: "กรุณาระบุรหัสผ่านใหม่อย่างน้อย 6 ตัวอักษร" });
+    }
+
+    const [rows] = await pool.query(
+      "SELECT id, employee_code, full_name, role FROM users WHERE id = ? LIMIT 1",
+      [req.params.id]
+    );
+    if (!rows[0]) return res.status(404).json({ message: "ไม่พบผู้ใช้งาน" });
+
+    const hashed = await bcrypt.hash(password, 10);
+    await pool.query("UPDATE users SET password = ? WHERE id = ?", [hashed, req.params.id]);
+    await logAudit({
+      req,
+      action: "user.password_reset",
+      targetType: "user",
+      targetId: rows[0].id,
+      after: { employee_code: rows[0].employee_code, full_name: rows[0].full_name },
+      note: `reset password ให้ user ${rows[0].employee_code}`,
+    });
+
+    res.json({ message: "Reset password เรียบร้อย" });
+  } catch (err) { next(err); }
+});
+
 router.patch("/users/:id/supervisor", csrfProtect, async (req, res, next) => {
   try {
     const { supervisor_id } = req.body;

@@ -7,6 +7,7 @@ import { authenticate, csrfProtect } from "../middleware/auth.js";
 import { logAudit } from "../middleware/audit.js";
 import { leaveAttachmentDir, normalizeOriginalName, uploadLeaveAttachments } from "../middleware/upload.js";
 import { notifyLeaveRequestCreated, notifyLeaveRequestResolved } from "../services/mailService.js";
+import { calculateLeaveHours, leaveHoursToDays } from "../services/leaveTime.js";
 
 const router = Router();
 
@@ -15,9 +16,7 @@ function mapRow(r) {
   const isHour = !!r.start_time;
   let total_hours = null;
   if (isHour && r.start_time && r.end_time) {
-    const [sh, sm] = r.start_time.split(":").map(Number);
-    const [eh, em] = r.end_time.split(":").map(Number);
-    total_hours = Math.round(((eh * 60 + em) - (sh * 60 + sm)) / 60 * 10) / 10;
+    total_hours = calculateLeaveHours(r.start_time, r.end_time);
   }
   return {
     ...r,
@@ -284,7 +283,6 @@ router.post("/", authenticate, csrfProtect, uploadLeaveAttachments.array("attach
       start_time = null,
       end_time = null,
       total_days = 0,
-      total_hours = null,
       request_type = "leave",
       reason,
     } = req.body;
@@ -299,8 +297,12 @@ router.post("/", authenticate, csrfProtect, uploadLeaveAttachments.array("attach
     if (!types[0]) return res.status(400).json({ message: "ประเภทการลาไม่ถูกต้อง" });
 
     const isHour = !!start_time;
+    const totalHoursToSave = isHour ? calculateLeaveHours(start_time, end_time) : null;
+    if (isHour && (!end_time || totalHoursToSave <= 0)) {
+      return res.status(400).json({ message: "กรุณาระบุช่วงเวลาลาให้ถูกต้อง" });
+    }
     const totalDaysToSave = isHour
-      ? parseFloat(((total_hours ?? 0) / 8).toFixed(2))
+      ? leaveHoursToDays(totalHoursToSave)
       : total_days;
 
     const year = new Date(start_date).getFullYear();

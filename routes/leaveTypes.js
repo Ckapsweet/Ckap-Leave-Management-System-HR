@@ -5,13 +5,22 @@ import { authenticate } from "../middleware/auth.js";
 
 const router = Router();
 
+function uniqueByName(rows) {
+  const byName = new Map();
+  rows.forEach((row) => {
+    const key = String(row.name ?? row.id).trim().toLowerCase();
+    if (!byName.has(key)) byName.set(key, row);
+  });
+  return Array.from(byName.values());
+}
+
 // GET /api/leave-types
 router.get("/", authenticate, async (req, res, next) => {
   try {
     const [rows] = await pool.query(
       "SELECT * FROM leave_types ORDER BY id ASC"
     );
-    res.json(rows);
+    res.json(uniqueByName(rows));
   } catch (err) {
     next(err);
   }

@@ -4,6 +4,7 @@ import pool from "../config/db.js";
 import { authenticate, requireAdmin, csrfProtect } from "../middleware/auth.js";
 import { logAudit } from "../middleware/audit.js";
 import { notifyLeaveRequestForwarded, notifyLeaveRequestResolved } from "../services/mailService.js";
+import { calculateLeaveHours, leaveHoursToDays } from "../services/leaveTime.js";
 
 const router = Router();
 router.use(authenticate, requireAdmin);
@@ -13,9 +14,7 @@ function mapRow(r) {
   const isHour = !!r.start_time;
   let total_hours = null;
   if (isHour && r.start_time && r.end_time) {
-    const [sh, sm] = r.start_time.split(":").map(Number);
-    const [eh, em] = r.end_time.split(":").map(Number);
-    total_hours = Math.round(((eh * 60 + em) - (sh * 60 + sm)) / 60 * 10) / 10;
+    total_hours = calculateLeaveHours(r.start_time, r.end_time);
   }
   return {
     ...r,
@@ -38,6 +37,17 @@ function mapRow(r) {
       max_days: r.leave_type_max_days,
     },
   };
+}
+
+function getLeaveDaysFromRow(row) {
+  if (row.start_time && row.end_time) {
+    return leaveHoursToDays(calculateLeaveHours(row.start_time, row.end_time));
+  }
+  return Number(row.total_days ?? 0);
+}
+
+function balanceKey(name, id) {
+  return String(name ?? id).trim().toLowerCase();
 }
 
 function attachmentUrl(id) {
@@ -501,17 +511,55 @@ router.get("/leave-pool/:user_id", async (req, res, next) => {
       [userId, year]
     );
 
-    const balances = bRows.map(b => ({
-      leave_type_id: b.leave_type_id,
-      name: b.name,
-      total_days: b.total_days ?? b.default_max,
-      used_days: b.used_days ?? 0,
-      remaining: Math.max(0, (b.total_days ?? b.default_max) - (b.used_days ?? 0))
-    }));
+    const [approvedRows] = await pool.query(
+      `SELECT lr.leave_type_id, lt.name, lr.start_time, lr.end_time, lr.total_days
+       FROM leave_requests lr
+       JOIN leave_types lt ON lt.id = lr.leave_type_id
+       WHERE lr.user_id = ? AND lr.status = 'approved' AND YEAR(lr.start_date) = ?`,
+      [userId, year]
+    );
+    const usedByType = approvedRows.reduce((acc, row) => {
+      const key = balanceKey(row.name, row.leave_type_id);
+      acc[key] = (acc[key] ?? 0) + getLeaveDaysFromRow(row);
+      return acc;
+    }, {});
+
+    const balanceMap = new Map();
+    bRows.forEach((b) => {
+      const key = balanceKey(b.name, b.leave_type_id);
+      const totalDays = Number(b.total_days ?? b.default_max);
+      const usedDays = Number(Number(usedByType[key] ?? b.used_days ?? 0).toFixed(2));
+      const existing = balanceMap.get(key);
+
+      if (!existing) {
+        balanceMap.set(key, {
+          leave_type_id: b.leave_type_id,
+          name: b.name,
+          total_days: totalDays,
+          used_days: usedDays,
+        });
+        return;
+      }
+
+      existing.leave_type_id = Math.min(existing.leave_type_id, b.leave_type_id);
+      existing.total_days = Math.max(existing.total_days, totalDays);
+      existing.used_days = usedByType[key] != null
+        ? existing.used_days
+        : Number((existing.used_days + usedDays).toFixed(2));
+    });
+    const balances = Array.from(balanceMap.values())
+      .map((balance) => ({
+        ...balance,
+        remaining: Math.max(0, Number((balance.total_days - balance.used_days).toFixed(2))),
+      }))
+      .sort((a, b) => a.leave_type_id - b.leave_type_id);
+
+    const totalUsedDays = Number(balances.reduce((sum, balance) => sum + balance.used_days, 0).toFixed(2));
 
     res.json({
       ...poolData,
-      remaining: Math.max(0, poolData.total_days - poolData.used_days),
+      used_days: totalUsedDays,
+      remaining: Math.max(0, poolData.total_days - totalUsedDays),
       balances
     });
   } catch (err) { next(err); }
@@ -580,13 +628,31 @@ router.patch("/leave-pool/:user_id", csrfProtect, async (req, res, next) => {
        ORDER BY lt.id ASC`,
       [userId, year]
     );
-    const updatedBalances = bRows.map(b => ({
-      leave_type_id: b.leave_type_id,
-      name: b.name,
-      total_days: b.total_days ?? 0,
-      used_days: b.used_days ?? 0,
-      remaining: Math.max(0, (b.total_days ?? 0) - (b.used_days ?? 0))
-    }));
+    const updatedBalanceMap = new Map();
+    bRows.forEach((b) => {
+      const key = balanceKey(b.name, b.leave_type_id);
+      const totalDays = Number(b.total_days ?? 0);
+      const usedDays = Number(b.used_days ?? 0);
+      const existing = updatedBalanceMap.get(key);
+      if (!existing) {
+        updatedBalanceMap.set(key, {
+          leave_type_id: b.leave_type_id,
+          name: b.name,
+          total_days: totalDays,
+          used_days: usedDays,
+        });
+        return;
+      }
+      existing.leave_type_id = Math.min(existing.leave_type_id, b.leave_type_id);
+      existing.total_days = Math.max(existing.total_days, totalDays);
+      existing.used_days = Number((existing.used_days + usedDays).toFixed(2));
+    });
+    const updatedBalances = Array.from(updatedBalanceMap.values())
+      .map((balance) => ({
+        ...balance,
+        remaining: Math.max(0, Number((balance.total_days - balance.used_days).toFixed(2))),
+      }))
+      .sort((a, b) => a.leave_type_id - b.leave_type_id);
 
     res.json({
       ...pRows[0],
@@ -823,11 +889,14 @@ router.get("/reports/dashboard-stats", async (req, res, next) => {
       pending_ots = otRow.pending_ots;
     } catch { /* table might not exist */ }
 
-    const [[{ total_approved_leave_days }]] = await pool.query(
-      `SELECT COALESCE(SUM(total_days), 0) AS total_approved_leave_days
+    const [approvedLeaveRows] = await pool.query(
+      `SELECT start_time, end_time, total_days
        FROM leave_requests
        WHERE status = 'approved' AND YEAR(start_date) = ?`,
       [currentYear]
+    );
+    const total_approved_leave_days = Number(
+      approvedLeaveRows.reduce((sum, row) => sum + getLeaveDaysFromRow(row), 0).toFixed(2)
     );
 
     const [deptRows] = await pool.query(
@@ -856,16 +925,25 @@ router.get("/reports/dashboard-stats", async (req, res, next) => {
       "จำนวนครั้งที่ลา": monthMap[i + 1] || 0,
     }));
 
-    const [leaveTypeRows] = await pool.query(
-      `SELECT u.department, lt.name AS leave_type, COALESCE(SUM(lr.total_days), 0) AS total_leave_days
+    const [leaveTypeRowsRaw] = await pool.query(
+      `SELECT u.department, lt.name AS leave_type, lr.start_time, lr.end_time, lr.total_days
        FROM leave_requests lr
        JOIN users u ON lr.user_id = u.id
        JOIN leave_types lt ON lr.leave_type_id = lt.id
        WHERE lr.status = 'approved' AND YEAR(lr.start_date) = ?
-       GROUP BY u.department, lt.name
        ORDER BY u.department ASC`,
       [currentYear]
     );
+    const leaveTypeStatsMap = leaveTypeRowsRaw.reduce((acc, row) => {
+      const key = `${row.department}::${row.leave_type}`;
+      if (!acc[key]) acc[key] = { department: row.department, leave_type: row.leave_type, total_leave_days: 0 };
+      acc[key].total_leave_days += getLeaveDaysFromRow(row);
+      return acc;
+    }, {});
+    const leaveTypeRows = Object.values(leaveTypeStatsMap).map((row) => ({
+      ...row,
+      total_leave_days: Number(row.total_leave_days.toFixed(2)),
+    }));
 
     res.json({
       summary: { total_users, pending_leaves, pending_ots, total_approved_leave_days },
@@ -884,16 +962,24 @@ router.get("/reports/leave-summary", async (req, res, next) => {
     }
 
     const sql = `
-      SELECT u.department, lt.name AS leave_type, SUM(lr.total_days) AS total_leave_days
+      SELECT u.department, lt.name AS leave_type, lr.start_time, lr.end_time, lr.total_days
       FROM leave_requests lr
       JOIN users u ON lr.user_id = u.id
       JOIN leave_types lt ON lr.leave_type_id = lt.id
       WHERE lr.status = 'approved' AND YEAR(lr.start_date) = YEAR(CURDATE())
-      GROUP BY u.department, lt.name
       ORDER BY u.department ASC
     `;
     const [rows] = await pool.query(sql);
-    res.json(rows);
+    const summaryMap = rows.reduce((acc, row) => {
+      const key = `${row.department}::${row.leave_type}`;
+      if (!acc[key]) acc[key] = { department: row.department, leave_type: row.leave_type, total_leave_days: 0 };
+      acc[key].total_leave_days += getLeaveDaysFromRow(row);
+      return acc;
+    }, {});
+    res.json(Object.values(summaryMap).map((row) => ({
+      ...row,
+      total_leave_days: Number(row.total_leave_days.toFixed(2)),
+    })));
   } catch (err) { next(err); }
 });
 
