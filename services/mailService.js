@@ -4,19 +4,35 @@ const DEFAULT_OUTLOOK_HOST = "smtp.office365.com";
 const DEFAULT_OUTLOOK_PORT = 587;
 
 function getSmtpConfig() {
+  const host = process.env.SMTP_HOST || DEFAULT_OUTLOOK_HOST;
   return {
-    host: process.env.SMTP_HOST || DEFAULT_OUTLOOK_HOST,
+    host,
     port: Number(process.env.SMTP_PORT || DEFAULT_OUTLOOK_PORT),
     secure: process.env.SMTP_SECURE === "true",
     user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-    from: process.env.MAIL_FROM || process.env.SMTP_USER,
+    pass: normalizeSmtpPassword(process.env.SMTP_PASS, host),
+    from: formatMailFrom(process.env.MAIL_FROM, process.env.SMTP_USER),
     enabled: process.env.MAIL_ENABLED !== "false",
+    verifyBeforeSend: process.env.MAIL_VERIFY_BEFORE_SEND !== "false",
+    timeout: Number(process.env.MAIL_TIMEOUT_MS || 15000),
   };
 }
 
+function normalizeSmtpPassword(pass, host) {
+  if (!pass) return pass;
+  if (host?.includes("gmail.com")) return pass.replace(/\s+/g, "");
+  return pass;
+}
+
+function formatMailFrom(from, smtpUser) {
+  const value = from?.trim();
+  if (!value) return smtpUser;
+  if (value.includes("@") || value.includes("<")) return value;
+  return smtpUser ? `"${value.replaceAll('"', '\\"')}" <${smtpUser}>` : value;
+}
+
 function isConfigured(config) {
-  return Boolean(config.enabled && config.host && config.port && config.user && config.pass && config.from);
+  return Boolean(config.enabled && config.host && config.port && Number.isFinite(config.port) && config.user && config.pass && config.from);
 }
 
 function isMailDebugEnabled() {
@@ -27,7 +43,7 @@ function missingConfigFields(config) {
   return [
     !config.enabled && "MAIL_ENABLED",
     !config.host && "SMTP_HOST",
-    !config.port && "SMTP_PORT",
+    (!config.port || !Number.isFinite(config.port)) && "SMTP_PORT",
     !config.user && "SMTP_USER",
     !config.pass && "SMTP_PASS",
     !config.from && "MAIL_FROM",
@@ -43,12 +59,40 @@ function redactSmtpConfig(config) {
     pass: config.pass ? "[set]" : "[missing]",
     from: config.from,
     enabled: config.enabled,
-    testTo: process.env.MAIL_TEST_TO || "",
+    verifyBeforeSend: config.verifyBeforeSend,
+    timeout: config.timeout,
   };
 }
 
-function mailErrorDetails(error) {
+function classifyMailError(error) {
+  if (error.code === "EAUTH" || error.responseCode === 535) {
+    return "smtp_auth_failed";
+  }
+  if (["ECONNECTION", "ETIMEDOUT", "ESOCKET", "ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN"].includes(error.code)) {
+    return "smtp_connection_failed";
+  }
+  if (error.code === "EENVELOPE" || error.responseCode === 550 || error.responseCode === 553) {
+    return "invalid_sender_or_recipient";
+  }
+  return "smtp_send_failed";
+}
+
+function mailErrorHint(error) {
+  const reason = classifyMailError(error);
+  const hints = {
+    smtp_auth_failed: "Check SMTP_USER and SMTP_PASS. For Gmail, use an App Password with 2-Step Verification enabled.",
+    smtp_connection_failed: "Check SMTP_HOST, SMTP_PORT, SMTP_SECURE, network access, and firewall rules.",
+    invalid_sender_or_recipient: "Check MAIL_FROM and recipient email addresses.",
+    smtp_send_failed: "Check the SMTP response and enable MAIL_DEBUG=true for stack details.",
+  };
+  return hints[reason];
+}
+
+function mailErrorDetails(error, stage = "send") {
   return {
+    stage,
+    reason: classifyMailError(error),
+    hint: mailErrorHint(error),
     name: error.name,
     message: error.message,
     code: error.code,
@@ -63,14 +107,16 @@ function mailErrorDetails(error) {
   };
 }
 
-function createTransporter() {
-  const config = getSmtpConfig();
+function createTransporter(config = getSmtpConfig()) {
   if (!isConfigured(config)) return null;
 
   return nodemailer.createTransport({
     host: config.host,
     port: config.port,
     secure: config.secure,
+    connectionTimeout: config.timeout,
+    greetingTimeout: config.timeout,
+    socketTimeout: config.timeout,
     auth: {
       user: config.user,
       pass: config.pass,
@@ -99,20 +145,46 @@ function requestUrl(requestId) {
   return baseUrl ? `${baseUrl.replace(/\/$/, "")}/admin` : "";
 }
 
+function isValidEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+function normalizeRecipients(to) {
+  const values = Array.isArray(to) ? to : [to];
+  const recipients = [];
+  const invalidRecipients = [];
+
+  values.filter(Boolean).forEach((value) => {
+    const email = String(value).trim();
+    if (isValidEmail(email)) {
+      recipients.push(email);
+    } else {
+      invalidRecipients.push(email);
+    }
+  });
+
+  return {
+    recipients: [...new Set(recipients)],
+    invalidRecipients: [...new Set(invalidRecipients)],
+  };
+}
+
 function recipientList(user) {
   return [...new Set([user?.email, user?.email_2].filter(Boolean))];
 }
 
-async function sendMail({ to, subject, html, text }) {
-  const recipients = Array.isArray(to) ? to.filter(Boolean) : [to].filter(Boolean);
-  const testRecipients = recipientList({
-    email: process.env.MAIL_TEST_TO,
-  });
-  const deliveryRecipients = testRecipients.length ? testRecipients : recipients;
-  if (!deliveryRecipients.length) return { skipped: true, reason: "missing_recipient" };
+async function sendMail({ to, subject, html, text, context }) {
+  const { recipients, invalidRecipients } = normalizeRecipients(to);
+  if (invalidRecipients.length) {
+    console.warn("[mail] skipped invalid recipient(s)", { invalidRecipients, context });
+  }
+  if (!recipients.length) {
+    console.warn("[mail] skipped: no valid recipient", { originalTo: to, context });
+    return { skipped: true, reason: "missing_recipient", invalidRecipients, context };
+  }
 
   const config = getSmtpConfig();
-  const transporter = createTransporter();
+  const transporter = createTransporter(config);
   if (!transporter || !isConfigured(config)) {
     const missingFields = missingConfigFields(config);
     console.warn("[mail] skipped: SMTP is not configured", {
@@ -122,32 +194,64 @@ async function sendMail({ to, subject, html, text }) {
     return { skipped: true, reason: "smtp_not_configured", missingFields };
   }
 
+  if (config.verifyBeforeSend) {
+    try {
+      await transporter.verify();
+    } catch (error) {
+      const details = mailErrorDetails(error, "verify");
+      console.error("[mail] SMTP verify failed:", {
+        ...details,
+        config: isMailDebugEnabled() ? redactSmtpConfig(config) : undefined,
+      });
+      return { failed: true, error: details };
+    }
+  }
+
   if (isMailDebugEnabled()) {
     console.info("[mail] sending", {
-      to: deliveryRecipients,
-      originalTo: recipients,
+      to: recipients,
       subject,
       config: redactSmtpConfig(config),
     });
   }
 
-  return transporter.sendMail({
+  const result = await transporter.sendMail({
     from: config.from,
-    to: deliveryRecipients.join(","),
+    to: recipients.join(","),
     subject,
     html,
     text,
   });
+  console.info("[mail] sent", {
+    accepted: result.accepted,
+    rejected: result.rejected,
+    response: result.response,
+    messageId: result.messageId,
+  });
+  return result;
 }
 
 async function sendMailSafely(mail) {
   try {
     return await sendMail(mail);
   } catch (error) {
-    const details = mailErrorDetails(error);
+    const details = mailErrorDetails(error, "send");
     console.error("[mail] send failed:", details);
     return { failed: true, error: details };
   }
+}
+
+export async function sendDiagnosticMail(to) {
+  const recipient = to || process.env.MAIL_TEST_TO || process.env.SMTP_USER;
+  return sendMailSafely({
+    to: recipient,
+    subject: "[CKAP Leave] Mail diagnostic",
+    html: `
+      <p>CKAP Leave mail diagnostic completed.</p>
+      <p>If you received this email, SMTP configuration and delivery are working.</p>
+    `,
+    text: "CKAP Leave mail diagnostic completed. If you received this email, SMTP configuration and delivery are working.",
+  });
 }
 
 function leaveDetailsHtml(leaveRequest) {
@@ -172,6 +276,18 @@ export async function notifyLeaveRequestCreated({ leaveRequest, requester, assig
   return sendMailSafely({
     to: recipients,
     subject: `[CKAP Leave] New leave request from ${requester.full_name || requester.employee_code}`,
+    context: {
+      notification: "leave_request_created",
+      leaveRequestId: leaveRequest.id,
+      recipientUser: assignee
+        ? {
+            full_name: assignee.full_name,
+            employee_code: assignee.employee_code,
+            email: assignee.email,
+            email_2: assignee.email_2,
+          }
+        : null,
+    },
     html: `
       <p>A new leave request is waiting for your review.</p>
       <p><strong>Requester:</strong> ${escapeHtml(requester.full_name || requester.employee_code)}</p>
@@ -188,6 +304,18 @@ export async function notifyLeaveRequestForwarded({ leaveRequest, requester, ass
   return sendMailSafely({
     to: recipients,
     subject: `[CKAP Leave] Leave request forwarded for approval`,
+    context: {
+      notification: "leave_request_forwarded",
+      leaveRequestId: leaveRequest.id,
+      recipientUser: assignee
+        ? {
+            full_name: assignee.full_name,
+            employee_code: assignee.employee_code,
+            email: assignee.email,
+            email_2: assignee.email_2,
+          }
+        : null,
+    },
     html: `
       <p>A leave request has been forwarded to you for the next approval step.</p>
       <p><strong>Requester:</strong> ${escapeHtml(requester.full_name || requester.employee_code)}</p>
@@ -205,6 +333,18 @@ export async function notifyLeaveRequestResolved({ leaveRequest, requester, appr
   return sendMailSafely({
     to: recipients,
     subject: `[CKAP Leave] Your leave request was ${status}`,
+    context: {
+      notification: "leave_request_resolved",
+      leaveRequestId: leaveRequest.id,
+      recipientUser: requester
+        ? {
+            full_name: requester.full_name,
+            employee_code: requester.employee_code,
+            email: requester.email,
+            email_2: requester.email_2,
+          }
+        : null,
+    },
     html: `
       <p>Your leave request was <strong>${escapeHtml(status)}</strong>.</p>
       <p><strong>Approver:</strong> ${escapeHtml(approver.full_name || approver.employee_code)}</p>

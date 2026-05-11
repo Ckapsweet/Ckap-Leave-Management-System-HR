@@ -54,6 +54,10 @@ function attachmentUrl(id) {
   return `/api/leave-requests/attachments/${id}`;
 }
 
+function hasEmail(user) {
+  return Boolean(user?.email || user?.email_2);
+}
+
 async function attachLeaveFiles(rows) {
   if (!rows.length) return rows;
   const ids = rows.map((r) => r.id);
@@ -122,18 +126,47 @@ async function getNextAssignee(conn, currentApproverId) {
   // ลองหาจาก supervisor_id ก่อน (ตรงที่สุด)
   if (approver.supervisor_id) {
     const [supRows] = await conn.query(
-      "SELECT id, role FROM users WHERE id = ? AND is_active = 1",
+      "SELECT id, role, email, email_2 FROM users WHERE id = ? AND is_active = 1",
       [approver.supervisor_id]
     );
-    if (supRows[0]?.role === nextRole) return supRows[0].id;
+    if (supRows[0]?.role === nextRole && hasEmail(supRows[0])) return supRows[0].id;
+    if (supRows[0]?.role === nextRole) {
+      console.warn("[mail] next assignee supervisor missing email", {
+        currentApproverId,
+        nextRole,
+        supervisorId: supRows[0].id,
+      });
+    }
   }
 
   // Fallback: หาคนที่มี role นั้นใน department เดียวกัน
   const [deptRows] = await conn.query(
+    `SELECT id, email, email_2
+     FROM users
+     WHERE role = ?
+       AND department = ?
+       AND is_active = 1
+       AND (
+         (email IS NOT NULL AND TRIM(email) <> '')
+         OR (email_2 IS NOT NULL AND TRIM(email_2) <> '')
+       )
+     LIMIT 1`,
+    [nextRole, approver.department]
+  );
+  if (deptRows[0]) return deptRows[0].id;
+
+  const [anyRows] = await conn.query(
     "SELECT id FROM users WHERE role = ? AND department = ? AND is_active = 1 LIMIT 1",
     [nextRole, approver.department]
   );
-  return deptRows[0]?.id ?? null;
+  if (anyRows[0]) {
+    console.warn("[mail] next assignee selected without email", {
+      currentApproverId,
+      nextRole,
+      selectedAssigneeId: anyRows[0].id,
+    });
+  }
+  return anyRows[0]?.id ?? null;
 }
 
 // ── GET /api/admin/leave-requests ────────────────────────────
