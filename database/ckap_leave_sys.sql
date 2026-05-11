@@ -20,6 +20,21 @@ SET time_zone = "+00:00";
 -- Database: `ckap_leave_sys`
 -- ============================================================
 
+CREATE TABLE `departments` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `name` varchar(255) NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `name` (`name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+INSERT INTO `departments` (`name`) VALUES
+('วิศวกรรมซอฟต์แวร์'),
+('การตลาด'),
+('ทรัพยากรบุคคล'),
+('การเงิน'),
+('ฝ่ายขาย');
+
 -- ────────────────────────────────────────────────────────────
 -- Table: users
 -- ────────────────────────────────────────────────────────────
@@ -32,6 +47,9 @@ CREATE TABLE `users` (
   `password`      varchar(255) DEFAULT NULL,
   `role`          enum('user','lead','assistant manager','manager', 'admin') NOT NULL DEFAULT 'user',
   `supervisor_id` int(11)      DEFAULT NULL,
+  `email`         varchar(255) DEFAULT NULL,
+  `email_2`       varchar(255) DEFAULT NULL,
+  `phone`         varchar(50)  DEFAULT NULL,
   `created_at`    timestamp    NOT NULL DEFAULT current_timestamp(),
   PRIMARY KEY (`id`),
   CONSTRAINT `fk_user_supervisor` FOREIGN KEY (`supervisor_id`) REFERENCES `users` (`id`)
@@ -92,8 +110,10 @@ CREATE TABLE `leave_requests` (
   `start_time`    time            DEFAULT NULL,
   `end_time`      time            DEFAULT NULL,
   `total_days`    decimal(5,2)    DEFAULT NULL,
+  `request_type`  enum('leave','late') NOT NULL DEFAULT 'leave',
   `reason`        text            DEFAULT NULL,
   `status`        enum('pending','approved','rejected') DEFAULT 'pending',
+  `current_assignee_id` int(11) DEFAULT NULL,
   `approved_by`   int(11)         DEFAULT NULL,
   `approved_at`   datetime        DEFAULT NULL,
   `created_at`    timestamp       NOT NULL DEFAULT current_timestamp(),
@@ -108,6 +128,25 @@ CREATE TABLE `leave_requests` (
 
 
 ALTER TABLE `leave_requests` MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=11;
+
+-- ─────────────────────────────────────────────────────────────
+-- Table: leave_request_attachments
+-- ─────────────────────────────────────────────────────────────
+
+CREATE TABLE `leave_request_attachments` (
+  `id`               int(11)      NOT NULL AUTO_INCREMENT,
+  `leave_request_id` int(11)      NOT NULL,
+  `original_name`    varchar(255) NOT NULL,
+  `stored_name`      varchar(255) NOT NULL,
+  `mime_type`        varchar(100) NOT NULL,
+  `size`             int(11)      NOT NULL,
+  `created_at`       timestamp    NOT NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`id`),
+  KEY `leave_request_id` (`leave_request_id`),
+  CONSTRAINT `leave_request_attachments_ibfk_1`
+    FOREIGN KEY (`leave_request_id`) REFERENCES `leave_requests` (`id`)
+    ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ────────────────────────────────────────────────────────────
 -- Table: leave_approvals
@@ -149,7 +188,8 @@ CREATE TABLE `leave_balances` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 
-ALTER TABLE `leave_balances` MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=33;
+ALTER TABLE `leave_balances` MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREME
+NT=33;
 
 -- ────────────────────────────────────────────────────────────
 -- Table: user_leave_pool  (pool รวมที่ backend ใช้ approve/reject)
@@ -246,6 +286,7 @@ CREATE TABLE `ot_requests` (
   `total_hours`   decimal(5,2)    DEFAULT NULL,
   `reason`        text            DEFAULT NULL,
   `status`        enum('pending','approved','rejected') DEFAULT 'pending',
+  `current_assignee_id` int(11) DEFAULT NULL,
   `approved_by`   int(11)         DEFAULT NULL,
   `approved_at`   datetime        DEFAULT NULL,
   `created_at`    timestamp       NOT NULL DEFAULT current_timestamp(),

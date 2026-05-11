@@ -3,18 +3,18 @@ import { Router } from "express";
 import pool from "../config/db.js";
 import { authenticate, requireAdmin, csrfProtect } from "../middleware/auth.js";
 import { logAudit } from "../middleware/audit.js";
+import { notifyLeaveRequestForwarded, notifyLeaveRequestResolved } from "../services/mailService.js";
+import { calculateLeaveHours, leaveHoursToDays } from "../services/leaveTime.js";
 
 const router = Router();
-router.use(authenticate, requireAdmin); // อย่าลืมเช็คว่า requireAdmin ใน middleware/auth.js อนุญาต 'admin' ด้วยนะครับ
+router.use(authenticate, requireAdmin);
 
 // ── helper ────────────────────────────────────────────────────
 function mapRow(r) {
   const isHour = !!r.start_time;
   let total_hours = null;
   if (isHour && r.start_time && r.end_time) {
-    const [sh, sm] = r.start_time.split(":").map(Number);
-    const [eh, em] = r.end_time.split(":").map(Number);
-    total_hours = Math.round(((eh * 60 + em) - (sh * 60 + sm)) / 60 * 10) / 10;
+    total_hours = calculateLeaveHours(r.start_time, r.end_time);
   }
   return {
     ...r,
@@ -27,6 +27,9 @@ function mapRow(r) {
       department: r.department,
       role: r.user_role,
       supervisor_id: r.supervisor_id,
+      email: r.email,
+      email_2: r.email_2,
+      phone: r.phone,
     },
     leave_type: {
       id: r.leave_type_id,
@@ -36,8 +39,47 @@ function mapRow(r) {
   };
 }
 
+function getLeaveDaysFromRow(row) {
+  if (row.start_time && row.end_time) {
+    return leaveHoursToDays(calculateLeaveHours(row.start_time, row.end_time));
+  }
+  return Number(row.total_days ?? 0);
+}
+
+function balanceKey(name, id) {
+  return String(name ?? id).trim().toLowerCase();
+}
+
+function attachmentUrl(id) {
+  return `/api/leave-requests/attachments/${id}`;
+}
+
+async function attachLeaveFiles(rows) {
+  if (!rows.length) return rows;
+  const ids = rows.map((r) => r.id);
+  const [files] = await pool.query(
+    `SELECT id, leave_request_id, original_name, mime_type, size
+     FROM leave_request_attachments
+     WHERE leave_request_id IN (?)
+     ORDER BY id ASC`,
+    [ids]
+  );
+  const byRequest = new Map();
+  files.forEach((file) => {
+    const item = {
+      id: file.id,
+      original_name: file.original_name,
+      file_name: file.original_name,
+      mime_type: file.mime_type,
+      size: file.size,
+      url: attachmentUrl(file.id),
+    };
+    byRequest.set(file.leave_request_id, [...(byRequest.get(file.leave_request_id) ?? []), item]);
+  });
+  return rows.map((row) => ({ ...row, attachments: byRequest.get(row.id) ?? [] }));
+}
+
 function assertSameDept(req, res, dept) {
-  // ยกเว้น admin และ manager ให้ข้ามแผนกได้
   if (req.user.role === "admin" || req.user.role === "manager") return true;
 
   const isDeptAdmin = req.user.role === "assistant manager";
@@ -48,19 +90,50 @@ function assertSameDept(req, res, dept) {
   return true;
 }
 
-async function assertIsSubordinate(conn, supervisorId, userId, res, reqRole) {
-  // ถ้าเป็น admin ให้จัดการได้ทุกคน
-  if (reqRole === "admin") return true;
-
-  const [rows] = await conn.query(
-    "SELECT id FROM users WHERE id = ? AND supervisor_id = ? LIMIT 1",
-    [userId, supervisorId]
-  );
-  if (!rows[0]) {
-    res.status(403).json({ message: "คุณไม่มีสิทธิ์ดำเนินการกับพนักงานที่ไม่ใช่ลูกน้องของคุณ" });
+async function assertWorkflowRights(req, res, targetRow) {
+  if (req.user.role === "admin") return true;
+  if (targetRow.current_assignee_id !== req.user.id) {
+    res.status(403).json({ message: "ยังไม่ถึงลำดับการอนุมัติ" });
     return false;
   }
   return true;
+}
+
+// ── FIXED: getNextAssignee ────────────────────────────────────
+// เดินตาม role chain: lead → assistant manager → manager
+// ไม่ใช้แค่ supervisor_id แบบตาบอดอีกต่อไป
+async function getNextAssignee(conn, currentApproverId) {
+  // ดึง role + supervisor_id ของคนที่เพิ่ง approve
+  const [rows] = await conn.query(
+    "SELECT role, supervisor_id, department FROM users WHERE id = ?",
+    [currentApproverId]
+  );
+  const approver = rows[0];
+  if (!approver) return null;
+
+  // กำหนด role ถัดไปในสายการอนุมัติ
+  const nextRoleMap = {
+    lead: "assistant manager",
+    "assistant manager": "manager",
+  };
+  const nextRole = nextRoleMap[approver.role];
+  if (!nextRole) return null; // manager / admin = final ไม่มีคนถัดไป
+
+  // ลองหาจาก supervisor_id ก่อน (ตรงที่สุด)
+  if (approver.supervisor_id) {
+    const [supRows] = await conn.query(
+      "SELECT id, role FROM users WHERE id = ?",
+      [approver.supervisor_id]
+    );
+    if (supRows[0]?.role === nextRole) return supRows[0].id;
+  }
+
+  // Fallback: หาคนที่มี role นั้นใน department เดียวกัน
+  const [deptRows] = await conn.query(
+    "SELECT id FROM users WHERE role = ? AND department = ? LIMIT 1",
+    [nextRole, approver.department]
+  );
+  return deptRows[0]?.id ?? null;
 }
 
 // ── GET /api/admin/leave-requests ────────────────────────────
@@ -70,6 +143,7 @@ router.get("/leave-requests", async (req, res, next) => {
 
     let sql = `
       SELECT lr.*, u.full_name AS user_full_name, u.employee_code, u.department, u.role AS user_role, u.supervisor_id,
+             u.email, u.email_2, u.phone,
              lt.name AS leave_type_name, lt.max_days AS leave_type_max_days,
              approver.full_name AS approver_name, la.comment
       FROM leave_requests lr
@@ -80,10 +154,14 @@ router.get("/leave-requests", async (req, res, next) => {
       WHERE 1=1`;
     const params = [];
 
-    // ถ้าไม่ใช่ admin ให้ดูได้เฉพาะคนที่อยู่ใต้สังกัด (Supervisor ID)
     if (["lead", "assistant manager", "manager"].includes(req.user.role) && req.user.role !== "admin") {
-      sql += " AND u.supervisor_id = ?";
-      params.push(req.user.id);
+      if (req.user.role === "manager") {
+        sql += " AND u.department = ?";
+        params.push(req.user.department);
+      } else {
+        sql += " AND (u.supervisor_id = ? OR lr.current_assignee_id = ?)";
+        params.push(req.user.id, req.user.id);
+      }
     }
 
     if (status) { sql += " AND lr.status = ?"; params.push(status); }
@@ -92,7 +170,7 @@ router.get("/leave-requests", async (req, res, next) => {
     sql += " ORDER BY lr.created_at DESC";
 
     const [rows] = await pool.query(sql, params);
-    res.json(rows.map(mapRow));
+    res.json(await attachLeaveFiles(rows.map(mapRow)));
   } catch (err) { next(err); }
 });
 
@@ -105,18 +183,20 @@ router.patch("/leave-requests/:id/approve", csrfProtect, async (req, res, next) 
     const approverId = req.user.id;
 
     const [rows] = await conn.query(
-      `SELECT lr.*, u.department AS user_dept, u.supervisor_id AS user_supervisor_id
+      `SELECT lr.*, u.department AS user_dept, u.supervisor_id AS user_supervisor_id,
+              u.full_name AS requester_full_name, u.employee_code AS requester_employee_code,
+              u.email AS requester_email, u.email_2 AS requester_email_2,
+              lt.name AS leave_type_name
        FROM leave_requests lr
        JOIN users u ON lr.user_id = u.id
+       JOIN leave_types lt ON lt.id = lr.leave_type_id
        WHERE lr.id = ? LIMIT 1`,
       [requestId]
     );
     if (!rows[0]) return res.status(404).json({ message: "ไม่พบคำขอลา" });
     if (!assertSameDept(req, res, rows[0].user_dept)) return;
+    if (!(await assertWorkflowRights(req, res, rows[0]))) return;
 
-    if (["lead", "assistant manager", "manager"].includes(req.user.role) && req.user.role !== "admin") {
-      if (!(await assertIsSubordinate(conn, approverId, rows[0].user_id, res, req.user.role))) return;
-    }
     if (rows[0].status !== "pending") {
       return res.status(400).json({ message: "คำขอนี้ถูกดำเนินการไปแล้ว" });
     }
@@ -125,15 +205,45 @@ router.patch("/leave-requests/:id/approve", csrfProtect, async (req, res, next) 
       status: rows[0].status,
       approved_by: rows[0].approved_by,
       approved_at: rows[0].approved_at,
+      current_assignee_id: rows[0].current_assignee_id,
     };
 
     await conn.beginTransaction();
     const now = new Date();
 
-    await conn.query(
-      "UPDATE leave_requests SET status = 'approved', approved_by = ?, approved_at = ? WHERE id = ?",
-      [approverId, now, requestId]
-    );
+    // FIXED: lead และ assistant manager ไม่ใช่ final เสมอ
+    const isFinalApproval = ["manager", "admin"].includes(req.user.role);
+
+    if (isFinalApproval) {
+      await conn.query(
+        "UPDATE leave_requests SET status = 'approved', approved_by = ?, approved_at = ?, current_assignee_id = NULL WHERE id = ?",
+        [approverId, now, requestId]
+      );
+      const year = new Date(rows[0].start_date).getFullYear();
+      const leaveTypeId = rows[0].leave_type_id;
+
+      // Update global pool
+      await conn.query(
+        `UPDATE user_leave_pool SET used_days = used_days + ? WHERE user_id = ? AND year = ?`,
+        [rows[0].total_days, rows[0].user_id, year]
+      );
+
+      // Update per-type balance
+      await conn.query(
+        `INSERT INTO leave_balances (user_id, leave_type_id, total_days, used_days, year)
+         SELECT ?, ?, max_days, ?, ? FROM leave_types WHERE id = ?
+         ON DUPLICATE KEY UPDATE used_days = used_days + ?`,
+        [rows[0].user_id, leaveTypeId, rows[0].total_days, year, leaveTypeId, rows[0].total_days]
+      );
+    } else {
+      // ส่งต่อไปยัง role ถัดไปใน chain
+      const nextAssignee = await getNextAssignee(conn, approverId);
+      await conn.query(
+        "UPDATE leave_requests SET current_assignee_id = ? WHERE id = ?",
+        [nextAssignee, requestId]
+      );
+    }
+
     await conn.query(
       `INSERT INTO leave_approvals (leave_request_id, approver_id, status, comment, approved_at)
        VALUES (?, ?, 'approved', ?, ?)
@@ -141,15 +251,16 @@ router.patch("/leave-requests/:id/approve", csrfProtect, async (req, res, next) 
       [requestId, approverId, comment, now, comment, now]
     );
 
-    const year = new Date(rows[0].start_date).getFullYear();
-    await conn.query(
-      `UPDATE user_leave_pool
-       SET used_days = used_days + ?
-       WHERE user_id = ? AND year = ?`,
-      [rows[0].total_days, rows[0].user_id, year]
-    );
-
     await conn.commit();
+
+    const nextAssigneeForResponse = isFinalApproval ? null : await (async () => {
+      // ดึง next assignee อีกครั้งเพื่อ response (หลัง commit แล้ว)
+      const [updated] = await pool.query(
+        "SELECT current_assignee_id FROM leave_requests WHERE id = ?",
+        [requestId]
+      );
+      return updated[0]?.current_assignee_id ?? null;
+    })();
 
     await logAudit({
       req,
@@ -157,12 +268,49 @@ router.patch("/leave-requests/:id/approve", csrfProtect, async (req, res, next) 
       targetType: "leave_request",
       targetId: Number(requestId),
       before,
-      after: { status: "approved", approved_by: approverId, approved_at: now, comment: comment ?? null },
+      after: { status: isFinalApproval ? "approved" : "pending", approved_by: approverId, approved_at: now, comment: comment ?? null },
       note: comment ?? null,
       conn,
     });
 
-    res.json({ message: "อนุมัติคำขอลาเรียบร้อย" });
+    const [[approver]] = await pool.query(
+      "SELECT full_name, employee_code, email, email_2 FROM users WHERE id = ? LIMIT 1",
+      [approverId]
+    );
+    const requester = {
+      full_name: rows[0].requester_full_name,
+      employee_code: rows[0].requester_employee_code,
+      email: rows[0].requester_email,
+      email_2: rows[0].requester_email_2,
+    };
+
+    if (isFinalApproval) {
+      await notifyLeaveRequestResolved({
+        leaveRequest: rows[0],
+        requester,
+        approver,
+        status: "approved",
+        comment,
+      });
+    } else if (nextAssigneeForResponse) {
+      const [[assignee]] = await pool.query(
+        "SELECT full_name, employee_code, email, email_2 FROM users WHERE id = ? LIMIT 1",
+        [nextAssigneeForResponse]
+      );
+      await notifyLeaveRequestForwarded({
+        leaveRequest: rows[0],
+        requester,
+        assignee,
+        approver,
+        comment,
+      });
+    }
+
+    res.json({
+      message: isFinalApproval ? "อนุมัติคำขอลาเรียบร้อย" : "รับทราบและส่งต่อคำขอเรียบร้อย",
+      status: isFinalApproval ? "approved" : "pending",
+      current_assignee_id: nextAssigneeForResponse,
+    });
   } catch (err) {
     await conn.rollback();
     next(err);
@@ -178,18 +326,20 @@ router.patch("/leave-requests/:id/reject", csrfProtect, async (req, res, next) =
     const approverId = req.user.id;
 
     const [rows] = await conn.query(
-      `SELECT lr.*, u.department AS user_dept, u.supervisor_id AS user_supervisor_id
+      `SELECT lr.*, u.department AS user_dept, u.supervisor_id AS user_supervisor_id,
+              u.full_name AS requester_full_name, u.employee_code AS requester_employee_code,
+              u.email AS requester_email, u.email_2 AS requester_email_2,
+              lt.name AS leave_type_name
        FROM leave_requests lr
        JOIN users u ON lr.user_id = u.id
+       JOIN leave_types lt ON lt.id = lr.leave_type_id
        WHERE lr.id = ? LIMIT 1`,
       [requestId]
     );
     if (!rows[0]) return res.status(404).json({ message: "ไม่พบคำขอลา" });
     if (!assertSameDept(req, res, rows[0].user_dept)) return;
+    if (!(await assertWorkflowRights(req, res, rows[0]))) return;
 
-    if (["lead", "assistant manager", "manager"].includes(req.user.role) && req.user.role !== "admin") {
-      if (!(await assertIsSubordinate(conn, approverId, rows[0].user_id, res, req.user.role))) return;
-    }
     if (rows[0].status !== "pending") {
       return res.status(400).json({ message: "คำขอนี้ถูกดำเนินการไปแล้ว" });
     }
@@ -198,13 +348,14 @@ router.patch("/leave-requests/:id/reject", csrfProtect, async (req, res, next) =
       status: rows[0].status,
       approved_by: rows[0].approved_by,
       approved_at: rows[0].approved_at,
+      current_assignee_id: rows[0].current_assignee_id,
     };
 
     await conn.beginTransaction();
     const now = new Date();
 
     await conn.query(
-      "UPDATE leave_requests SET status = 'rejected', approved_by = ?, approved_at = ? WHERE id = ?",
+      "UPDATE leave_requests SET status = 'rejected', approved_by = ?, approved_at = ?, current_assignee_id = NULL WHERE id = ?",
       [approverId, now, requestId]
     );
     await conn.query(
@@ -227,7 +378,28 @@ router.patch("/leave-requests/:id/reject", csrfProtect, async (req, res, next) =
       conn,
     });
 
-    res.json({ message: "ปฏิเสธคำขอลาเรียบร้อย" });
+    const [[approver]] = await pool.query(
+      "SELECT full_name, employee_code, email, email_2 FROM users WHERE id = ? LIMIT 1",
+      [approverId]
+    );
+    await notifyLeaveRequestResolved({
+      leaveRequest: rows[0],
+      requester: {
+        full_name: rows[0].requester_full_name,
+        employee_code: rows[0].requester_employee_code,
+        email: rows[0].requester_email,
+        email_2: rows[0].requester_email_2,
+      },
+      approver,
+      status: "rejected",
+      comment,
+    });
+
+    res.json({
+      message: "ปฏิเสธคำขอลาเรียบร้อย",
+      status: "rejected",
+      current_assignee_id: null,
+    });
   } catch (err) {
     await conn.rollback();
     next(err);
@@ -237,17 +409,17 @@ router.patch("/leave-requests/:id/reject", csrfProtect, async (req, res, next) =
 // ── GET /api/admin/users ──────────────────────────────────────
 router.get("/users", async (req, res, next) => {
   try {
-    let sql = `SELECT id, employee_code, full_name, department, role, supervisor_id, created_at FROM users`;
-    const params = [];
+    let sql = `SELECT id, employee_code, full_name, department, role, supervisor_id, email, email_2, phone, created_at FROM users`;
+    const where = ["id != ?"];
+    const params = [req.user.id];
 
     if (req.user.role === "lead") {
-      sql += " WHERE id != ? AND role = 'user'";
-      params.push(req.user.id);
+      where.push("role = 'user'");
     } else if (req.user.role === "assistant manager") {
-      sql += " WHERE id != ? AND role = 'lead'";
-      params.push(req.user.id);
+      where.push("role = 'lead'");
     }
-    // manager และ admin เห็นทุกคน
+    // manager และ admin เห็นทุกคน ยกเว้นตัวเอง
+    sql += ` WHERE ${where.join(" AND ")}`;
     sql += " ORDER BY id ASC";
 
     const [rows] = await pool.query(sql, params);
@@ -279,7 +451,7 @@ router.patch("/users/:id/assign-subordinate", csrfProtect, async (req, res, next
     let allowedSubRoles = [];
     if (callerRole === "lead") allowedSubRoles = ["user"];
     else if (callerRole === "assistant manager") allowedSubRoles = ["lead"];
-    else allowedSubRoles = ["assistant manager", "lead", "user", "manager"]; // admin/manager สามารถคุมได้ทั้งหมด
+    else allowedSubRoles = ["assistant manager", "lead", "user", "manager"];
 
     if (!allowedSubRoles.includes(target[0].role)) {
       return res.status(400).json({ message: `ไม่สามารถกำหนด role ${target[0].role} เป็นลูกน้องได้` });
@@ -292,7 +464,6 @@ router.patch("/users/:id/assign-subordinate", csrfProtect, async (req, res, next
       return res.status(409).json({ message: "พนักงานนี้มีหัวหน้าอยู่แล้ว กรุณาติดต่อ admin" });
     }
 
-    // If admin explicitly passes a supervisor_id, use it. Otherwise default to callerId if assigning.
     const explicitSupervisor = req.body.supervisor_id;
     const newSupervisor = assign
       ? (callerRole === "admin" && explicitSupervisor !== undefined ? explicitSupervisor : callerId)
@@ -317,19 +488,80 @@ router.patch("/users/:id/assign-subordinate", csrfProtect, async (req, res, next
 router.get("/leave-pool/:user_id", async (req, res, next) => {
   try {
     const year = req.query.year ?? new Date().getFullYear();
-    const [uRows] = await pool.query("SELECT department FROM users WHERE id = ? LIMIT 1", [req.params.user_id]);
+    const userId = req.params.user_id;
+
+    const [uRows] = await pool.query("SELECT department FROM users WHERE id = ? LIMIT 1", [userId]);
     if (!uRows[0]) return res.status(404).json({ message: "ไม่พบผู้ใช้งาน" });
     if (!assertSameDept(req, res, uRows[0].department)) return;
 
-    const [rows] = await pool.query(
+    // 1. ดึง pool รวม
+    const [pRows] = await pool.query(
       "SELECT * FROM user_leave_pool WHERE user_id = ? AND year = ? LIMIT 1",
-      [req.params.user_id, year]
+      [userId, year]
     );
-    const r = rows[0];
-    if (!r) {
-      return res.json({ id: null, user_id: Number(req.params.user_id), total_days: 0, used_days: 0, remaining: 0, year: Number(year) });
-    }
-    res.json({ ...r, remaining: Math.max(0, r.total_days - r.used_days) });
+    const poolData = pRows[0] || { id: null, user_id: Number(userId), total_days: 0, used_days: 0, year: Number(year) };
+    
+    // 2. ดึงแยกตามประเภท
+    const [bRows] = await pool.query(
+      `SELECT lt.id AS leave_type_id, lt.name, lt.max_days AS default_max,
+              lb.total_days, lb.used_days
+       FROM leave_types lt
+       LEFT JOIN leave_balances lb ON lb.leave_type_id = lt.id AND lb.user_id = ? AND lb.year = ?
+       ORDER BY lt.id ASC`,
+      [userId, year]
+    );
+
+    const [approvedRows] = await pool.query(
+      `SELECT lr.leave_type_id, lt.name, lr.start_time, lr.end_time, lr.total_days
+       FROM leave_requests lr
+       JOIN leave_types lt ON lt.id = lr.leave_type_id
+       WHERE lr.user_id = ? AND lr.status = 'approved' AND YEAR(lr.start_date) = ?`,
+      [userId, year]
+    );
+    const usedByType = approvedRows.reduce((acc, row) => {
+      const key = balanceKey(row.name, row.leave_type_id);
+      acc[key] = (acc[key] ?? 0) + getLeaveDaysFromRow(row);
+      return acc;
+    }, {});
+
+    const balanceMap = new Map();
+    bRows.forEach((b) => {
+      const key = balanceKey(b.name, b.leave_type_id);
+      const totalDays = Number(b.total_days ?? b.default_max);
+      const usedDays = Number(Number(usedByType[key] ?? b.used_days ?? 0).toFixed(2));
+      const existing = balanceMap.get(key);
+
+      if (!existing) {
+        balanceMap.set(key, {
+          leave_type_id: b.leave_type_id,
+          name: b.name,
+          total_days: totalDays,
+          used_days: usedDays,
+        });
+        return;
+      }
+
+      existing.leave_type_id = Math.min(existing.leave_type_id, b.leave_type_id);
+      existing.total_days = Math.max(existing.total_days, totalDays);
+      existing.used_days = usedByType[key] != null
+        ? existing.used_days
+        : Number((existing.used_days + usedDays).toFixed(2));
+    });
+    const balances = Array.from(balanceMap.values())
+      .map((balance) => ({
+        ...balance,
+        remaining: Math.max(0, Number((balance.total_days - balance.used_days).toFixed(2))),
+      }))
+      .sort((a, b) => a.leave_type_id - b.leave_type_id);
+
+    const totalUsedDays = Number(balances.reduce((sum, balance) => sum + balance.used_days, 0).toFixed(2));
+
+    res.json({
+      ...poolData,
+      used_days: totalUsedDays,
+      remaining: Math.max(0, poolData.total_days - totalUsedDays),
+      balances
+    });
   } catch (err) { next(err); }
 });
 
@@ -337,37 +569,96 @@ router.get("/leave-pool/:user_id", async (req, res, next) => {
 router.patch("/leave-pool/:user_id", csrfProtect, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const { remaining_days, year } = req.body;
+    const { balances, year } = req.body; // balances: [{ leave_type_id, total_days }]
     const userId = req.params.user_id;
 
-    if (remaining_days === undefined || !year) return res.status(400).json({ message: "กรุณากรอกข้อมูลให้ครบถ้วน" });
-    if (remaining_days < 0) return res.status(400).json({ message: "วันลาคงเหลือต้องไม่ติดลบ" });
+    if (!balances || !Array.isArray(balances) || !year) {
+      return res.status(400).json({ message: "กรุณากรอกข้อมูลให้ครบถ้วน" });
+    }
 
     const [uRows] = await conn.query("SELECT department FROM users WHERE id = ? LIMIT 1", [userId]);
     if (!uRows[0]) return res.status(404).json({ message: "ไม่พบผู้ใช้งาน" });
     if (!assertSameDept(req, res, uRows[0].department)) return;
 
-    const [existing] = await conn.query("SELECT total_days, used_days FROM user_leave_pool WHERE user_id = ? AND year = ? LIMIT 1", [userId, year]);
-    const before = existing[0] ?? null;
-    const used_days = before?.used_days ?? 0;
-    const total_days = parseFloat(remaining_days) + parseFloat(used_days);
-
     await conn.beginTransaction();
+
+    let totalGlobalDays = 0;
+    let totalGlobalUsed = 0;
+
+    for (const b of balances) {
+      const [existing] = await conn.query(
+        "SELECT used_days FROM leave_balances WHERE user_id = ? AND leave_type_id = ? AND year = ? LIMIT 1",
+        [userId, b.leave_type_id, year]
+      );
+      const used = existing[0]?.used_days ?? 0;
+      await conn.query(
+        `INSERT INTO leave_balances (user_id, leave_type_id, total_days, used_days, year)
+         VALUES (?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE total_days = ?`,
+        [userId, b.leave_type_id, b.total_days, used, year, b.total_days]
+      );
+      totalGlobalDays += parseFloat(b.total_days);
+      totalGlobalUsed += parseFloat(used);
+    }
+
+    // อัปเดต user_leave_pool ให้ตรงกัน (Optional: ถ้าอยากให้ pool รวมสะท้อนยอดรวมทั้งหมด)
     await conn.query(
       `INSERT INTO user_leave_pool (user_id, total_days, used_days, year)
-       VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE total_days = ?`,
-      [userId, total_days, used_days, year, total_days]
+       VALUES (?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE total_days = ?`,
+      [userId, totalGlobalDays, totalGlobalUsed, year, totalGlobalDays]
     );
+
     await conn.commit();
 
     await logAudit({
-      req, action: "balance.update", targetType: "leave_balance", targetId: Number(userId),
-      before: before ? { total_days: before.total_days, used_days: before.used_days } : null,
-      after: { total_days, used_days }, note: `แก้ไขวันลาคงเหลือ ${remaining_days} วัน`,
+      req, action: "balance.update_multiple", targetType: "leave_balance", targetId: Number(userId),
+      after: { balances, totalGlobalDays }, note: `แก้ไขวันลาแยกประเภท ปี ${year}`,
     });
 
-    const [rows] = await pool.query("SELECT * FROM user_leave_pool WHERE user_id = ? AND year = ? LIMIT 1", [userId, year]);
-    res.json({ ...rows[0], remaining: Math.max(0, rows[0].total_days - rows[0].used_days) });
+    // ดึงข้อมูลกลับไปส่ง response
+    const [pRows] = await pool.query(
+      "SELECT * FROM user_leave_pool WHERE user_id = ? AND year = ? LIMIT 1",
+      [userId, year]
+    );
+    const [bRows] = await pool.query(
+      `SELECT lt.id AS leave_type_id, lt.name, lb.total_days, lb.used_days
+       FROM leave_types lt
+       LEFT JOIN leave_balances lb ON lb.leave_type_id = lt.id AND lb.user_id = ? AND lb.year = ?
+       ORDER BY lt.id ASC`,
+      [userId, year]
+    );
+    const updatedBalanceMap = new Map();
+    bRows.forEach((b) => {
+      const key = balanceKey(b.name, b.leave_type_id);
+      const totalDays = Number(b.total_days ?? 0);
+      const usedDays = Number(b.used_days ?? 0);
+      const existing = updatedBalanceMap.get(key);
+      if (!existing) {
+        updatedBalanceMap.set(key, {
+          leave_type_id: b.leave_type_id,
+          name: b.name,
+          total_days: totalDays,
+          used_days: usedDays,
+        });
+        return;
+      }
+      existing.leave_type_id = Math.min(existing.leave_type_id, b.leave_type_id);
+      existing.total_days = Math.max(existing.total_days, totalDays);
+      existing.used_days = Number((existing.used_days + usedDays).toFixed(2));
+    });
+    const updatedBalances = Array.from(updatedBalanceMap.values())
+      .map((balance) => ({
+        ...balance,
+        remaining: Math.max(0, Number((balance.total_days - balance.used_days).toFixed(2))),
+      }))
+      .sort((a, b) => a.leave_type_id - b.leave_type_id);
+
+    res.json({
+      ...pRows[0],
+      remaining: Math.max(0, pRows[0].total_days - pRows[0].used_days),
+      balances: updatedBalances
+    });
   } catch (err) {
     await conn.rollback(); next(err);
   } finally { conn.release(); }
@@ -388,10 +679,14 @@ router.get("/ot-requests", async (req, res, next) => {
       WHERE 1=1`;
     const params = [];
 
-    // admin เห็นทุกคน, role อื่นเห็นเฉพาะลูกน้อง
     if (["lead", "assistant manager", "manager"].includes(req.user.role) && req.user.role !== "admin") {
-      sql += " AND u.supervisor_id = ?";
-      params.push(req.user.id);
+      if (req.user.role === "manager") {
+        sql += " AND u.department = ?";
+        params.push(req.user.department);
+      } else {
+        sql += " AND (u.supervisor_id = ? OR ot.current_assignee_id = ?)";
+        params.push(req.user.id, req.user.id);
+      }
     }
 
     if (status) { sql += " AND ot.status = ?"; params.push(status); }
@@ -416,18 +711,163 @@ router.get("/ot-requests", async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// ── PATCH /api/admin/ot-requests/:id/approve & /reject ────────
-// ... โค้ดสำหรับ OT Approve และ Reject ทำงานเหมือนเดิม ...
+// ── PATCH /api/admin/ot-requests/:id/approve ─────────────────
 router.patch("/ot-requests/:id/approve", csrfProtect, async (req, res, next) => {
-  // logic เดิม
+  const conn = await pool.getConnection();
+  try {
+    const { comment = null } = req.body;
+    const requestId = req.params.id;
+    const approverId = req.user.id;
+
+    const [rows] = await conn.query(
+      `SELECT ot.*, u.department AS user_dept
+       FROM ot_requests ot
+       JOIN users u ON ot.user_id = u.id
+       WHERE ot.id = ? LIMIT 1`,
+      [requestId]
+    );
+    if (!rows[0]) return res.status(404).json({ message: "ไม่พบคำขอ OT" });
+    if (!assertSameDept(req, res, rows[0].user_dept)) return;
+    if (!(await assertWorkflowRights(req, res, rows[0]))) return;
+
+    if (rows[0].status !== "pending") {
+      return res.status(400).json({ message: "คำขอนี้ถูกดำเนินการไปแล้ว" });
+    }
+
+    const before = {
+      status: rows[0].status,
+      approved_by: rows[0].approved_by,
+      approved_at: rows[0].approved_at,
+      current_assignee_id: rows[0].current_assignee_id,
+    };
+
+    await conn.beginTransaction();
+    const now = new Date();
+
+    // FIXED: lead และ assistant manager ไม่ใช่ final
+    const isFinalApproval = ["manager", "admin"].includes(req.user.role);
+
+    if (isFinalApproval) {
+      await conn.query(
+        "UPDATE ot_requests SET status = 'approved', approved_by = ?, approved_at = ?, current_assignee_id = NULL WHERE id = ?",
+        [approverId, now, requestId]
+      );
+    } else {
+      const nextAssignee = await getNextAssignee(conn, approverId);
+      await conn.query(
+        "UPDATE ot_requests SET current_assignee_id = ? WHERE id = ?",
+        [nextAssignee, requestId]
+      );
+    }
+
+    await conn.query(
+      `INSERT INTO ot_approvals (ot_request_id, approver_id, status, comment, approved_at)
+       VALUES (?, ?, 'approved', ?, ?)
+       ON DUPLICATE KEY UPDATE status = 'approved', comment = ?, approved_at = ?`,
+      [requestId, approverId, comment, now, comment, now]
+    );
+
+    await conn.commit();
+
+    const nextAssigneeForResponse = isFinalApproval ? null : await (async () => {
+      const [updated] = await pool.query(
+        "SELECT current_assignee_id FROM ot_requests WHERE id = ?",
+        [requestId]
+      );
+      return updated[0]?.current_assignee_id ?? null;
+    })();
+
+    await logAudit({
+      req,
+      action: "ot.approve",
+      targetType: "ot_request",
+      targetId: Number(requestId),
+      before,
+      after: { status: isFinalApproval ? "approved" : "pending", approved_by: approverId, approved_at: now, comment: comment ?? null },
+      note: comment ?? null,
+      conn,
+    });
+
+    res.json({
+      message: isFinalApproval ? "อนุมัติคำขอ OT เรียบร้อย" : "รับทราบและส่งต่อคำขอเรียบร้อย",
+      status: isFinalApproval ? "approved" : "pending",
+      current_assignee_id: nextAssigneeForResponse,
+    });
+  } catch (err) {
+    await conn.rollback();
+    next(err);
+  } finally { conn.release(); }
 });
 
+// ── PATCH /api/admin/ot-requests/:id/reject ──────────────────
 router.patch("/ot-requests/:id/reject", csrfProtect, async (req, res, next) => {
-  // logic เดิม
+  const conn = await pool.getConnection();
+  try {
+    const { comment = null } = req.body;
+    const requestId = req.params.id;
+    const approverId = req.user.id;
+
+    const [rows] = await conn.query(
+      `SELECT ot.*, u.department AS user_dept
+       FROM ot_requests ot
+       JOIN users u ON ot.user_id = u.id
+       WHERE ot.id = ? LIMIT 1`,
+      [requestId]
+    );
+    if (!rows[0]) return res.status(404).json({ message: "ไม่พบคำขอ OT" });
+    if (!assertSameDept(req, res, rows[0].user_dept)) return;
+    if (!(await assertWorkflowRights(req, res, rows[0]))) return;
+
+    if (rows[0].status !== "pending") {
+      return res.status(400).json({ message: "คำขอนี้ถูกดำเนินการไปแล้ว" });
+    }
+
+    const before = {
+      status: rows[0].status,
+      approved_by: rows[0].approved_by,
+      approved_at: rows[0].approved_at,
+      current_assignee_id: rows[0].current_assignee_id,
+    };
+
+    await conn.beginTransaction();
+    const now = new Date();
+
+    await conn.query(
+      "UPDATE ot_requests SET status = 'rejected', approved_by = ?, approved_at = ?, current_assignee_id = NULL WHERE id = ?",
+      [approverId, now, requestId]
+    );
+    await conn.query(
+      `INSERT INTO ot_approvals (ot_request_id, approver_id, status, comment, approved_at)
+       VALUES (?, ?, 'rejected', ?, ?)
+       ON DUPLICATE KEY UPDATE status = 'rejected', comment = ?, approved_at = ?`,
+      [requestId, approverId, comment, now, comment, now]
+    );
+
+    await conn.commit();
+
+    await logAudit({
+      req,
+      action: "ot.reject",
+      targetType: "ot_request",
+      targetId: Number(requestId),
+      before,
+      after: { status: "rejected", approved_by: approverId, approved_at: now, comment: comment ?? null },
+      note: comment ?? null,
+      conn,
+    });
+
+    res.json({
+      message: "ปฏิเสธคำขอ OT เรียบร้อย",
+      status: "rejected",
+      current_assignee_id: null,
+    });
+  } catch (err) {
+    await conn.rollback();
+    next(err);
+  } finally { conn.release(); }
 });
 
-// ── GET /api/admin/reports/dashboard-stats ────────────────
-// Endpoint สำหรับหน้า OverviewDashboard (Admin)
+// ── GET /api/admin/reports/dashboard-stats ────────────────────
 router.get("/reports/dashboard-stats", async (req, res, next) => {
   try {
     if (req.user.role !== "admin" && req.user.role !== "manager") {
@@ -436,13 +876,11 @@ router.get("/reports/dashboard-stats", async (req, res, next) => {
 
     const currentYear = new Date().getFullYear();
 
-    // 1) Summary stats
     const [[{ total_users }]] = await pool.query("SELECT COUNT(*) AS total_users FROM users");
     const [[{ pending_leaves }]] = await pool.query(
       "SELECT COUNT(*) AS pending_leaves FROM leave_requests WHERE status = 'pending'"
     );
 
-    // pending OT — table may not exist yet, so catch gracefully
     let pending_ots = 0;
     try {
       const [[otRow]] = await pool.query(
@@ -451,14 +889,16 @@ router.get("/reports/dashboard-stats", async (req, res, next) => {
       pending_ots = otRow.pending_ots;
     } catch { /* table might not exist */ }
 
-    const [[{ total_approved_leave_days }]] = await pool.query(
-      `SELECT COALESCE(SUM(total_days), 0) AS total_approved_leave_days
+    const [approvedLeaveRows] = await pool.query(
+      `SELECT start_time, end_time, total_days
        FROM leave_requests
        WHERE status = 'approved' AND YEAR(start_date) = ?`,
       [currentYear]
     );
+    const total_approved_leave_days = Number(
+      approvedLeaveRows.reduce((sum, row) => sum + getLeaveDaysFromRow(row), 0).toFixed(2)
+    );
 
-    // 2) Department stats (pie chart – จำนวนครั้งการลาแยกตามแผนก)
     const [deptRows] = await pool.query(
       `SELECT u.department AS name, COUNT(*) AS value
        FROM leave_requests lr
@@ -469,7 +909,6 @@ router.get("/reports/dashboard-stats", async (req, res, next) => {
       [currentYear]
     );
 
-    // 3) Monthly stats (bar chart – จำนวนครั้งที่ลาแยกตามเดือน)
     const monthNames = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
     const [monthRows] = await pool.query(
       `SELECT MONTH(start_date) AS m, COUNT(*) AS cnt
@@ -486,17 +925,25 @@ router.get("/reports/dashboard-stats", async (req, res, next) => {
       "จำนวนครั้งที่ลา": monthMap[i + 1] || 0,
     }));
 
-    // 4) Leave type stats (table – แยกตามแผนกและประเภทการลา)
-    const [leaveTypeRows] = await pool.query(
-      `SELECT u.department, lt.name AS leave_type, COALESCE(SUM(lr.total_days), 0) AS total_leave_days
+    const [leaveTypeRowsRaw] = await pool.query(
+      `SELECT u.department, lt.name AS leave_type, lr.start_time, lr.end_time, lr.total_days
        FROM leave_requests lr
        JOIN users u ON lr.user_id = u.id
        JOIN leave_types lt ON lr.leave_type_id = lt.id
        WHERE lr.status = 'approved' AND YEAR(lr.start_date) = ?
-       GROUP BY u.department, lt.name
        ORDER BY u.department ASC`,
       [currentYear]
     );
+    const leaveTypeStatsMap = leaveTypeRowsRaw.reduce((acc, row) => {
+      const key = `${row.department}::${row.leave_type}`;
+      if (!acc[key]) acc[key] = { department: row.department, leave_type: row.leave_type, total_leave_days: 0 };
+      acc[key].total_leave_days += getLeaveDaysFromRow(row);
+      return acc;
+    }, {});
+    const leaveTypeRows = Object.values(leaveTypeStatsMap).map((row) => ({
+      ...row,
+      total_leave_days: Number(row.total_leave_days.toFixed(2)),
+    }));
 
     res.json({
       summary: { total_users, pending_leaves, pending_ots, total_approved_leave_days },
@@ -507,8 +954,7 @@ router.get("/reports/dashboard-stats", async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// ── GET /api/admin/reports/leave-summary ─────────────────
-// Endpoint ใหม่สำหรับดึงข้อมูลสรุปไปทำ Dashboard ฝั่ง Frontend
+// ── GET /api/admin/reports/leave-summary ─────────────────────
 router.get("/reports/leave-summary", async (req, res, next) => {
   try {
     if (req.user.role !== "admin" && req.user.role !== "manager") {
@@ -516,84 +962,91 @@ router.get("/reports/leave-summary", async (req, res, next) => {
     }
 
     const sql = `
-      SELECT u.department, lt.name AS leave_type, SUM(lr.total_days) AS total_leave_days
+      SELECT u.department, lt.name AS leave_type, lr.start_time, lr.end_time, lr.total_days
       FROM leave_requests lr
       JOIN users u ON lr.user_id = u.id
       JOIN leave_types lt ON lr.leave_type_id = lt.id
       WHERE lr.status = 'approved' AND YEAR(lr.start_date) = YEAR(CURDATE())
-      GROUP BY u.department, lt.name
       ORDER BY u.department ASC
     `;
     const [rows] = await pool.query(sql);
-    res.json(rows);
+    const summaryMap = rows.reduce((acc, row) => {
+      const key = `${row.department}::${row.leave_type}`;
+      if (!acc[key]) acc[key] = { department: row.department, leave_type: row.leave_type, total_leave_days: 0 };
+      acc[key].total_leave_days += getLeaveDaysFromRow(row);
+      return acc;
+    }, {});
+    res.json(Object.values(summaryMap).map((row) => ({
+      ...row,
+      total_leave_days: Number(row.total_leave_days.toFixed(2)),
+    })));
   } catch (err) { next(err); }
 });
 
 // ── GET /api/admin/departments ────────────────────────────────
 router.get("/departments", async (req, res, next) => {
-    try {
-      const [rows] = await pool.query("SELECT * FROM departments ORDER BY name ASC");
-      res.json(rows);
-    } catch (err) { next(err); }
-  });
+  try {
+    const [rows] = await pool.query("SELECT * FROM departments ORDER BY name ASC");
+    res.json(rows);
+  } catch (err) { next(err); }
+});
 
-  // ── POST /api/admin/departments ───────────────────────────────
-  router.post("/departments", csrfProtect, async (req, res, next) => {
-    try {
-      if (req.user.role !== "admin" && req.user.role !== "manager") {
-        return res.status(403).json({ message: "ไม่มีสิทธิ์ใช้งาน" });
-      }
-      const { name } = req.body;
-      if (!name) return res.status(400).json({ message: "กรุณาระบุชื่อแผนก" });
-
-      await pool.query("INSERT INTO departments (name) VALUES (?)", [name]);
-      res.json({ message: "เพิ่มแผนกเรียบร้อย" });
-    } catch (err) {
-      if (err.code === 'ER_DUP_ENTRY') {
-        return res.status(400).json({ message: "ชื่อแผนกนี้มีอยู่แล้ว" });
-      }
-      next(err);
+// ── POST /api/admin/departments ───────────────────────────────
+router.post("/departments", csrfProtect, async (req, res, next) => {
+  try {
+    if (req.user.role !== "admin" && req.user.role !== "manager") {
+      return res.status(403).json({ message: "ไม่มีสิทธิ์ใช้งาน" });
     }
-  });
+    const { name } = req.body;
+    if (!name) return res.status(400).json({ message: "กรุณาระบุชื่อแผนก" });
 
-  // ── PUT /api/admin/departments/:id ────────────────────────────
-  router.put("/departments/:id", csrfProtect, async (req, res, next) => {
-    try {
-      if (req.user.role !== "admin" && req.user.role !== "manager") {
-        return res.status(403).json({ message: "ไม่มีสิทธิ์ใช้งาน" });
-      }
-      const { name } = req.body;
-      if (!name) return res.status(400).json({ message: "กรุณาระบุชื่อแผนก" });
-
-      await pool.query("UPDATE departments SET name = ? WHERE id = ?", [name, req.params.id]);
-      res.json({ message: "แก้ไขแผนกเรียบร้อย" });
-    } catch (err) {
-      if (err.code === 'ER_DUP_ENTRY') {
-        return res.status(400).json({ message: "ชื่อแผนกนี้มีอยู่แล้ว" });
-      }
-      next(err);
+    await pool.query("INSERT INTO departments (name) VALUES (?)", [name]);
+    res.json({ message: "เพิ่มแผนกเรียบร้อย" });
+  } catch (err) {
+    if (err.code === "ER_DUP_ENTRY") {
+      return res.status(400).json({ message: "ชื่อแผนกนี้มีอยู่แล้ว" });
     }
-  });
+    next(err);
+  }
+});
 
-  // ── DELETE /api/admin/departments/:id ─────────────────────────
-  router.delete("/departments/:id", csrfProtect, async (req, res, next) => {
-    try {
-      if (req.user.role !== "admin" && req.user.role !== "manager") {
-        return res.status(403).json({ message: "ไม่มีสิทธิ์ใช้งาน" });
-      }
+// ── PUT /api/admin/departments/:id ────────────────────────────
+router.put("/departments/:id", csrfProtect, async (req, res, next) => {
+  try {
+    if (req.user.role !== "admin" && req.user.role !== "manager") {
+      return res.status(403).json({ message: "ไม่มีสิทธิ์ใช้งาน" });
+    }
+    const { name } = req.body;
+    if (!name) return res.status(400).json({ message: "กรุณาระบุชื่อแผนก" });
 
-      // Check if any users are in this department
-      const [dept] = await pool.query("SELECT name FROM departments WHERE id = ?", [req.params.id]);
-      if (!dept[0]) return res.status(404).json({ message: "ไม่พบแผนก" });
+    await pool.query("UPDATE departments SET name = ? WHERE id = ?", [name, req.params.id]);
+    res.json({ message: "แก้ไขแผนกเรียบร้อย" });
+  } catch (err) {
+    if (err.code === "ER_DUP_ENTRY") {
+      return res.status(400).json({ message: "ชื่อแผนกนี้มีอยู่แล้ว" });
+    }
+    next(err);
+  }
+});
 
-      const [users] = await pool.query("SELECT id FROM users WHERE department = ? LIMIT 1", [dept[0].name]);
-      if (users.length > 0) {
-        return res.status(400).json({ message: "ไม่สามารถลบแผนกที่มีพนักงานสังกัดอยู่ได้" });
-      }
+// ── DELETE /api/admin/departments/:id ─────────────────────────
+router.delete("/departments/:id", csrfProtect, async (req, res, next) => {
+  try {
+    if (req.user.role !== "admin" && req.user.role !== "manager") {
+      return res.status(403).json({ message: "ไม่มีสิทธิ์ใช้งาน" });
+    }
 
-      await pool.query("DELETE FROM departments WHERE id = ?", [req.params.id]);
-      res.json({ message: "ลบแผนกเรียบร้อย" });
-    } catch (err) { next(err); }
-  });
+    const [dept] = await pool.query("SELECT name FROM departments WHERE id = ?", [req.params.id]);
+    if (!dept[0]) return res.status(404).json({ message: "ไม่พบแผนก" });
 
-  export default router;
+    const [users] = await pool.query("SELECT id FROM users WHERE department = ? LIMIT 1", [dept[0].name]);
+    if (users.length > 0) {
+      return res.status(400).json({ message: "ไม่สามารถลบแผนกที่มีพนักงานสังกัดอยู่ได้" });
+    }
+
+    await pool.query("DELETE FROM departments WHERE id = ?", [req.params.id]);
+    res.json({ message: "ลบแผนกเรียบร้อย" });
+  } catch (err) { next(err); }
+});
+
+export default router;

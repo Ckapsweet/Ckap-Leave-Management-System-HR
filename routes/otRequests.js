@@ -133,11 +133,15 @@ router.post("/", authenticate, csrfProtect, async (req, res, next) => {
     }
 
     await conn.beginTransaction();
+
+    const [u] = await conn.query("SELECT supervisor_id FROM users WHERE id = ?", [req.user.id]);
+    const assigneeId = u[0]?.supervisor_id || null;
+
     const [result] = await conn.query(
       `INSERT INTO ot_requests
-         (user_id, ot_date, start_time, end_time, total_hours, reason, status)
-       VALUES (?, ?, ?, ?, ?, ?, 'pending')`,
-      [req.user.id, ot_date, start_time, end_time, total_hours, reason]
+         (user_id, ot_date, start_time, end_time, total_hours, reason, status, current_assignee_id)
+       VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`,
+      [req.user.id, ot_date, start_time, end_time, total_hours, reason, assigneeId]
     );
     await conn.commit();
 
