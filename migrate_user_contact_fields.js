@@ -28,6 +28,10 @@ async function migrate() {
   await addColumnIfMissing("email", "email VARCHAR(255) NULL AFTER supervisor_id");
   await addColumnIfMissing("email_2", "email_2 VARCHAR(255) NULL AFTER email");
   await addColumnIfMissing("phone", "phone VARCHAR(50) NULL AFTER email_2");
+  await pool.query("ALTER TABLE users MODIFY email VARCHAR(255) NULL");
+  await pool.query("ALTER TABLE users MODIFY email_2 VARCHAR(255) NULL");
+  await pool.query("ALTER TABLE users MODIFY phone VARCHAR(50) NULL");
+  console.log("Aligned users contact fields with backend schema");
   await pool.end();
 }
 

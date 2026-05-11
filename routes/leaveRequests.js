@@ -351,10 +351,10 @@ router.post("/", authenticate, csrfProtect, uploadLeaveAttachments.array("attach
     if (!isAutoApprove) {
       // ดึง supervisor ของ user และตรวจ role
       const [supRows] = await conn.query(
-        `SELECT u2.id, u2.role
+         `SELECT u2.id, u2.role
          FROM users u1
          JOIN users u2 ON u2.id = u1.supervisor_id
-         WHERE u1.id = ?`,
+         WHERE u1.id = ? AND u1.is_active = 1 AND u2.is_active = 1`,
         [req.user.id]
       );
 
@@ -365,8 +365,9 @@ router.post("/", authenticate, csrfProtect, uploadLeaveAttachments.array("attach
         // ไม่มี supervisor → fallback หา lead ใน department เดียวกัน
         const [leadRows] = await conn.query(
           `SELECT id FROM users
-           WHERE department = (SELECT department FROM users WHERE id = ?)
+           WHERE department = (SELECT department FROM users WHERE id = ? AND is_active = 1)
              AND role = 'lead'
+             AND is_active = 1
            LIMIT 1`,
           [req.user.id]
         );
@@ -375,8 +376,9 @@ router.post("/", authenticate, csrfProtect, uploadLeaveAttachments.array("attach
         if (!assigneeId) {
           const [amRows] = await conn.query(
             `SELECT id FROM users
-             WHERE department = (SELECT department FROM users WHERE id = ?)
+             WHERE department = (SELECT department FROM users WHERE id = ? AND is_active = 1)
                AND role = 'assistant manager'
+               AND is_active = 1
              LIMIT 1`,
             [req.user.id]
           );

@@ -134,7 +134,13 @@ router.post("/", authenticate, csrfProtect, async (req, res, next) => {
 
     await conn.beginTransaction();
 
-    const [u] = await conn.query("SELECT supervisor_id FROM users WHERE id = ?", [req.user.id]);
+    const [u] = await conn.query(
+      `SELECT supervisor.id AS supervisor_id
+       FROM users requester
+       LEFT JOIN users supervisor ON supervisor.id = requester.supervisor_id AND supervisor.is_active = 1
+       WHERE requester.id = ? AND requester.is_active = 1`,
+      [req.user.id]
+    );
     const assigneeId = u[0]?.supervisor_id || null;
 
     const [result] = await conn.query(

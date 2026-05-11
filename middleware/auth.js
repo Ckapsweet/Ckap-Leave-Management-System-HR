@@ -1,16 +1,33 @@
 // middleware/auth.js
 import jwt from "jsonwebtoken";
+import pool from "../config/db.js";
 
 // ── อ่าน JWT จาก httpOnly cookie ─────────────────────────────
-export function authenticate(req, res, next) {
+export async function authenticate(req, res, next) {
   const token = req.cookies?.token;
   if (!token) return res.status(401).json({ message: "Unauthorized" });
 
   try {
-    req.user = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const [rows] = await pool.query(
+      `SELECT id, employee_code, full_name, department, role, supervisor_id, email, email_2, phone
+       FROM users
+       WHERE id = ? AND is_active = 1
+       LIMIT 1`,
+      [decoded.id]
+    );
+    if (!rows[0]) {
+      res.clearCookie("token");
+      res.clearCookie("csrf_token");
+      return res.status(401).json({ message: "User inactive or not found" });
+    }
+    req.user = { ...decoded, ...rows[0] };
     next();
-  } catch {
-    res.status(401).json({ message: "Token invalid or expired" });
+  } catch (err) {
+    if (err?.name === "JsonWebTokenError" || err?.name === "TokenExpiredError") {
+      return res.status(401).json({ message: "Token invalid or expired" });
+    }
+    next(err);
   }
 }
 
