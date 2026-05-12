@@ -140,9 +140,57 @@ function formatDate(value) {
   return date.toISOString().slice(0, 10);
 }
 
+function timeToMinutes(value) {
+  if (!value) return null;
+  const [hour, minute] = String(value).split(":").map(Number);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
+  return hour * 60 + minute;
+}
+
+function formatDurationMinutes(totalMinutes) {
+  const minutes = Number(totalMinutes ?? 0);
+  if (!Number.isFinite(minutes) || minutes <= 0) return "-";
+
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  const parts = [];
+  if (hours) parts.push(`${hours} ${hours === 1 ? "hour" : "hours"}`);
+  if (remainingMinutes) parts.push(`${remainingMinutes} ${remainingMinutes === 1 ? "minute" : "minutes"}`);
+  return parts.join(" ");
+}
+
+function leaveDurationText(leaveRequest) {
+  if (!leaveRequest.start_time || !leaveRequest.end_time) {
+    return {
+      label: "Total days",
+      value: leaveRequest.total_days ?? "-",
+    };
+  }
+
+  const startMinute = timeToMinutes(leaveRequest.start_time);
+  const endMinute = timeToMinutes(leaveRequest.end_time);
+  if (startMinute === null || endMinute === null || endMinute <= startMinute) {
+    return {
+      label: "Total time",
+      value: "-",
+    };
+  }
+
+  const lunchOverlap = Math.max(
+    0,
+    Math.min(endMinute, 13 * 60) - Math.max(startMinute, 12 * 60)
+  );
+  const workMinutes = Math.max(0, endMinute - startMinute - lunchOverlap);
+
+  return {
+    label: "Total time",
+    value: formatDurationMinutes(workMinutes),
+  };
+}
+
 function requestUrl(requestId) {
   const baseUrl = process.env.FRONTEND_URL;
-  return baseUrl ? `${baseUrl.replace(/\/$/, "")}/admin` : "";
+  return baseUrl ? `${baseUrl.replace(/\/$/, "")}/lead` : "";
 }
 
 function isValidEmail(value) {
@@ -267,12 +315,13 @@ function leaveDetailsHtml(leaveRequest) {
   const unitText = leaveRequest.start_time
     ? `${escapeHtml(leaveRequest.start_time)} - ${escapeHtml(leaveRequest.end_time)}`
     : `${escapeHtml(formatDate(leaveRequest.start_date))} - ${escapeHtml(formatDate(leaveRequest.end_date))}`;
+  const duration = leaveDurationText(leaveRequest);
 
   return `
     <ul>
       <li><strong>Leave type:</strong> ${escapeHtml(leaveRequest.leave_type_name || leaveRequest.leave_type?.name)}</li>
       <li><strong>Date/time:</strong> ${unitText}</li>
-      <li><strong>Total days:</strong> ${escapeHtml(leaveRequest.total_days)}</li>
+      <li><strong>${escapeHtml(duration.label)}:</strong> ${escapeHtml(duration.value)}</li>
       <li><strong>Reason:</strong> ${escapeHtml(leaveRequest.reason)}</li>
     </ul>
   `;
@@ -309,6 +358,7 @@ export async function notifyLeaveRequestCreated({ leaveRequest, requester, assig
 export async function notifyLeaveRequestSubmitted({ leaveRequest, requester, status, assignee }) {
   const recipients = recipientList(requester);
   const statusLabel = leaveStatusLabel(status);
+  const duration = leaveDurationText(leaveRequest);
   const reviewerText = assignee
     ? `<p><strong>Current reviewer:</strong> ${escapeHtml(assignee.full_name || assignee.employee_code)}</p>`
     : "";
@@ -340,7 +390,7 @@ export async function notifyLeaveRequestSubmitted({ leaveRequest, requester, sta
       `Status: ${statusLabel}`,
       assignee ? `Current reviewer: ${assignee.full_name || assignee.employee_code}` : "",
       `Leave type: ${leaveRequest.leave_type_name || leaveRequest.leave_type?.name || "-"}`,
-      `Total days: ${leaveRequest.total_days ?? "-"}`,
+      `${duration.label}: ${duration.value}`,
       `Reason: ${leaveRequest.reason ?? "-"}`,
     ].filter(Boolean).join("\n"),
   });
