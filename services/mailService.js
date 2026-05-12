@@ -173,6 +173,15 @@ function recipientList(user) {
   return [...new Set([user?.email, user?.email_2].filter(Boolean))];
 }
 
+function leaveStatusLabel(status) {
+  const labels = {
+    pending: "Pending approval",
+    approved: "Approved",
+    rejected: "Rejected",
+  };
+  return labels[status] || status;
+}
+
 async function sendMail({ to, subject, html, text, context }) {
   const { recipients, invalidRecipients } = normalizeRecipients(to);
   if (invalidRecipients.length) {
@@ -294,6 +303,46 @@ export async function notifyLeaveRequestCreated({ leaveRequest, requester, assig
       ${leaveDetailsHtml(leaveRequest)}
       ${link ? `<p><a href="${escapeHtml(link)}">Open leave management system</a></p>` : ""}
     `,
+  });
+}
+
+export async function notifyLeaveRequestSubmitted({ leaveRequest, requester, status, assignee }) {
+  const recipients = recipientList(requester);
+  const statusLabel = leaveStatusLabel(status);
+  const reviewerText = assignee
+    ? `<p><strong>Current reviewer:</strong> ${escapeHtml(assignee.full_name || assignee.employee_code)}</p>`
+    : "";
+
+  return sendMailSafely({
+    to: recipients,
+    subject: `[CKAP Leave] Your leave request is ${statusLabel}`,
+    context: {
+      notification: "leave_request_submitted",
+      leaveRequestId: leaveRequest.id,
+      status,
+      recipientUser: requester
+        ? {
+            full_name: requester.full_name,
+            employee_code: requester.employee_code,
+            email: requester.email,
+            email_2: requester.email_2,
+          }
+        : null,
+    },
+    html: `
+      <p>Your leave request has been submitted.</p>
+      <p><strong>Status:</strong> ${escapeHtml(statusLabel)}</p>
+      ${reviewerText}
+      ${leaveDetailsHtml(leaveRequest)}
+    `,
+    text: [
+      "Your leave request has been submitted.",
+      `Status: ${statusLabel}`,
+      assignee ? `Current reviewer: ${assignee.full_name || assignee.employee_code}` : "",
+      `Leave type: ${leaveRequest.leave_type_name || leaveRequest.leave_type?.name || "-"}`,
+      `Total days: ${leaveRequest.total_days ?? "-"}`,
+      `Reason: ${leaveRequest.reason ?? "-"}`,
+    ].filter(Boolean).join("\n"),
   });
 }
 
