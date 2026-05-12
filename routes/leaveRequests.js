@@ -6,7 +6,7 @@ import pool from "../config/db.js";
 import { authenticate, csrfProtect } from "../middleware/auth.js";
 import { logAudit } from "../middleware/audit.js";
 import { leaveAttachmentDir, normalizeOriginalName, uploadLeaveAttachments } from "../middleware/upload.js";
-import { notifyLeaveRequestCreated, notifyLeaveRequestResolved } from "../services/mailService.js";
+import { notifyLeaveRequestCreated, notifyLeaveRequestSubmitted } from "../services/mailService.js";
 import { calculateLeaveHours, leaveHoursToDays } from "../services/leaveTime.js";
 
 const router = Router();
@@ -462,10 +462,10 @@ router.post("/", authenticate, csrfProtect, uploadLeaveAttachments.array("attach
     );
     const created = mapRow(rows[0]);
     const requester = {
-      full_name: rows[0].requester_full_name,
-      employee_code: rows[0].requester_employee_code,
-      email: rows[0].requester_email,
-      email_2: rows[0].requester_email_2,
+      full_name: rows[0].requester_full_name || req.user.full_name,
+      employee_code: rows[0].requester_employee_code || req.user.employee_code,
+      email: rows[0].requester_email || req.user.email,
+      email_2: rows[0].requester_email_2 || req.user.email_2,
     };
     const assignee = rows[0].assignee_employee_code ? {
       full_name: rows[0].assignee_full_name,
@@ -493,15 +493,14 @@ router.post("/", authenticate, csrfProtect, uploadLeaveAttachments.array("attach
       },
     });
 
-    if (isAutoApprove) {
-      await notifyLeaveRequestResolved({
-        leaveRequest: rows[0],
-        requester,
-        approver: requester,
-        status: "approved",
-        comment: "Auto approved by manager role",
-      });
-    } else {
+    await notifyLeaveRequestSubmitted({
+      leaveRequest: rows[0],
+      requester,
+      status: finalStatus,
+      assignee,
+    });
+
+    if (!isAutoApprove) {
       await notifyLeaveRequestCreated({
         leaveRequest: rows[0],
         requester,
