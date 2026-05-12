@@ -54,6 +54,10 @@ function attachmentUrl(id) {
   return `/api/leave-requests/attachments/${id}`;
 }
 
+function hasEmail(user) {
+  return Boolean(user?.email || user?.email_2);
+}
+
 async function attachLeaveFiles(rows) {
   if (!rows.length) return rows;
   const ids = rows.map((r) => r.id);
@@ -105,7 +109,7 @@ async function assertWorkflowRights(req, res, targetRow) {
 async function getNextAssignee(conn, currentApproverId) {
   // ดึง role + supervisor_id ของคนที่เพิ่ง approve
   const [rows] = await conn.query(
-    "SELECT role, supervisor_id, department FROM users WHERE id = ?",
+    "SELECT role, supervisor_id, department FROM users WHERE id = ? AND is_active = 1",
     [currentApproverId]
   );
   const approver = rows[0];
@@ -122,18 +126,47 @@ async function getNextAssignee(conn, currentApproverId) {
   // ลองหาจาก supervisor_id ก่อน (ตรงที่สุด)
   if (approver.supervisor_id) {
     const [supRows] = await conn.query(
-      "SELECT id, role FROM users WHERE id = ?",
+      "SELECT id, role, email, email_2 FROM users WHERE id = ? AND is_active = 1",
       [approver.supervisor_id]
     );
-    if (supRows[0]?.role === nextRole) return supRows[0].id;
+    if (supRows[0]?.role === nextRole && hasEmail(supRows[0])) return supRows[0].id;
+    if (supRows[0]?.role === nextRole) {
+      console.warn("[mail] next assignee supervisor missing email", {
+        currentApproverId,
+        nextRole,
+        supervisorId: supRows[0].id,
+      });
+    }
   }
 
   // Fallback: หาคนที่มี role นั้นใน department เดียวกัน
   const [deptRows] = await conn.query(
-    "SELECT id FROM users WHERE role = ? AND department = ? LIMIT 1",
+    `SELECT id, email, email_2
+     FROM users
+     WHERE role = ?
+       AND department = ?
+       AND is_active = 1
+       AND (
+         (email IS NOT NULL AND TRIM(email) <> '')
+         OR (email_2 IS NOT NULL AND TRIM(email_2) <> '')
+       )
+     LIMIT 1`,
     [nextRole, approver.department]
   );
-  return deptRows[0]?.id ?? null;
+  if (deptRows[0]) return deptRows[0].id;
+
+  const [anyRows] = await conn.query(
+    "SELECT id FROM users WHERE role = ? AND department = ? AND is_active = 1 LIMIT 1",
+    [nextRole, approver.department]
+  );
+  if (anyRows[0]) {
+    console.warn("[mail] next assignee selected without email", {
+      currentApproverId,
+      nextRole,
+      selectedAssigneeId: anyRows[0].id,
+    });
+  }
+  return anyRows[0]?.id ?? null;
 }
 
 // ── GET /api/admin/leave-requests ────────────────────────────
@@ -410,7 +443,7 @@ router.patch("/leave-requests/:id/reject", csrfProtect, async (req, res, next) =
 router.get("/users", async (req, res, next) => {
   try {
     let sql = `SELECT id, employee_code, full_name, department, role, supervisor_id, email, email_2, phone, created_at FROM users`;
-    const where = ["id != ?"];
+    const where = ["id != ?", "is_active = 1"];
     const params = [req.user.id];
 
     if (req.user.role === "lead") {
@@ -443,7 +476,7 @@ router.patch("/users/:id/assign-subordinate", csrfProtect, async (req, res, next
     }
 
     const [target] = await pool.query(
-      "SELECT id, full_name, role, supervisor_id FROM users WHERE id = ? LIMIT 1",
+      "SELECT id, full_name, role, supervisor_id FROM users WHERE id = ? AND is_active = 1 LIMIT 1",
       [userId]
     );
     if (!target[0]) return res.status(404).json({ message: "ไม่พบผู้ใช้งาน" });
@@ -490,7 +523,7 @@ router.get("/leave-pool/:user_id", async (req, res, next) => {
     const year = req.query.year ?? new Date().getFullYear();
     const userId = req.params.user_id;
 
-    const [uRows] = await pool.query("SELECT department FROM users WHERE id = ? LIMIT 1", [userId]);
+    const [uRows] = await pool.query("SELECT department FROM users WHERE id = ? AND is_active = 1 LIMIT 1", [userId]);
     if (!uRows[0]) return res.status(404).json({ message: "ไม่พบผู้ใช้งาน" });
     if (!assertSameDept(req, res, uRows[0].department)) return;
 
@@ -576,7 +609,7 @@ router.patch("/leave-pool/:user_id", csrfProtect, async (req, res, next) => {
       return res.status(400).json({ message: "กรุณากรอกข้อมูลให้ครบถ้วน" });
     }
 
-    const [uRows] = await conn.query("SELECT department FROM users WHERE id = ? LIMIT 1", [userId]);
+    const [uRows] = await conn.query("SELECT department FROM users WHERE id = ? AND is_active = 1 LIMIT 1", [userId]);
     if (!uRows[0]) return res.status(404).json({ message: "ไม่พบผู้ใช้งาน" });
     if (!assertSameDept(req, res, uRows[0].department)) return;
 
@@ -876,7 +909,7 @@ router.get("/reports/dashboard-stats", async (req, res, next) => {
 
     const currentYear = new Date().getFullYear();
 
-    const [[{ total_users }]] = await pool.query("SELECT COUNT(*) AS total_users FROM users");
+    const [[{ total_users }]] = await pool.query("SELECT COUNT(*) AS total_users FROM users WHERE is_active = 1");
     const [[{ pending_leaves }]] = await pool.query(
       "SELECT COUNT(*) AS pending_leaves FROM leave_requests WHERE status = 'pending'"
     );
@@ -1039,7 +1072,7 @@ router.delete("/departments/:id", csrfProtect, async (req, res, next) => {
     const [dept] = await pool.query("SELECT name FROM departments WHERE id = ?", [req.params.id]);
     if (!dept[0]) return res.status(404).json({ message: "ไม่พบแผนก" });
 
-    const [users] = await pool.query("SELECT id FROM users WHERE department = ? LIMIT 1", [dept[0].name]);
+    const [users] = await pool.query("SELECT id FROM users WHERE department = ? AND is_active = 1 LIMIT 1", [dept[0].name]);
     if (users.length > 0) {
       return res.status(400).json({ message: "ไม่สามารถลบแผนกที่มีพนักงานสังกัดอยู่ได้" });
     }

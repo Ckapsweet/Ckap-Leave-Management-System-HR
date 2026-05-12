@@ -67,7 +67,7 @@ router.post("/login", async (req, res, next) => {
     }
 
     const [rows] = await pool.query(
-      "SELECT * FROM users WHERE employee_code = ? LIMIT 1",
+      "SELECT * FROM users WHERE employee_code = ? AND is_active = 1 LIMIT 1",
       [employee_code]
     );
     const user = rows[0];
@@ -103,7 +103,7 @@ router.post("/logout", (req, res) => {
 router.get("/me", authenticate, async (req, res, next) => {
   try {
     const [rows] = await pool.query(
-      "SELECT id, employee_code, full_name, department, role, supervisor_id, email, email_2, phone FROM users WHERE id = ? LIMIT 1",
+      "SELECT id, employee_code, full_name, department, role, supervisor_id, email, email_2, phone FROM users WHERE id = ? AND is_active = 1 LIMIT 1",
       [req.user.id]
     );
     if (!rows[0]) return res.status(404).json({ message: "ไม่พบผู้ใช้งาน" });
@@ -132,7 +132,7 @@ router.put("/profile", authenticate, csrfProtect, async (req, res, next) => {
     );
 
     const [rows] = await pool.query(
-      "SELECT id, employee_code, full_name, department, role, supervisor_id, email, email_2, phone FROM users WHERE id = ? LIMIT 1",
+      "SELECT id, employee_code, full_name, department, role, supervisor_id, email, email_2, phone FROM users WHERE id = ? AND is_active = 1 LIMIT 1",
       [req.user.id]
     );
     if (!rows[0]) return res.status(404).json({ message: "ไม่พบผู้ใช้งาน" });
@@ -152,7 +152,7 @@ router.post("/change-password", authenticate, async (req, res, next) => {
     }
 
     const [rows] = await pool.query(
-      "SELECT * FROM users WHERE id = ? LIMIT 1",
+      "SELECT * FROM users WHERE id = ? AND is_active = 1 LIMIT 1",
       [req.user.id]
     );
     const user = rows[0];

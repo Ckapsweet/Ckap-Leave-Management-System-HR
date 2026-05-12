@@ -70,6 +70,51 @@ async function canAccessAttachment(req, leaveRequest) {
   return false;
 }
 
+function hasEmail(user) {
+  return Boolean(user?.email || user?.email_2);
+}
+
+async function findInitialAssignee(conn, userId) {
+  const [supRows] = await conn.query(
+    `SELECT u2.id, u2.role, u2.email, u2.email_2, u2.department
+     FROM users u1
+     JOIN users u2 ON u2.id = u1.supervisor_id
+     WHERE u1.id = ? AND u1.is_active = 1 AND u2.is_active = 1
+     LIMIT 1`,
+    [userId]
+  );
+
+  if (hasEmail(supRows[0])) return supRows[0].id;
+
+  const [fallbackRows] = await conn.query(
+    `SELECT id, role, email, email_2
+     FROM users
+     WHERE department = (SELECT department FROM users WHERE id = ? AND is_active = 1)
+       AND role IN ('lead', 'assistant manager', 'manager')
+       AND is_active = 1
+       AND (
+         (email IS NOT NULL AND TRIM(email) <> '')
+         OR (email_2 IS NOT NULL AND TRIM(email_2) <> '')
+       )
+     ORDER BY FIELD(role, 'lead', 'assistant manager', 'manager'), id ASC
+     LIMIT 1`,
+    [userId]
+  );
+
+  if (fallbackRows[0]) {
+    console.warn("[mail] initial assignee fallback selected", {
+      userId,
+      originalAssigneeId: supRows[0]?.id ?? null,
+      originalAssigneeRole: supRows[0]?.role ?? null,
+      selectedAssigneeId: fallbackRows[0].id,
+      selectedAssigneeRole: fallbackRows[0].role,
+      reason: supRows[0] ? "supervisor_missing_email" : "missing_supervisor",
+    });
+  }
+
+  return fallbackRows[0]?.id ?? supRows[0]?.id ?? null;
+}
+
 // ── GET /api/leave-requests/today ─────────────────────────────
 router.get("/today", authenticate, async (req, res, next) => {
   try {
@@ -346,43 +391,10 @@ router.post("/", authenticate, csrfProtect, uploadLeaveAttachments.array("attach
     const approvedBy = isAutoApprove ? req.user.id : null;
     const approvedAt = isAutoApprove ? new Date() : null;
 
-    // ── FIXED: หา assignee แรกในสาย (ต้องเป็น lead) ──────────
+    // ── FIXED: หา assignee แรกในสาย และเลี่ยงคนที่ไม่มีอีเมลถ้ามี fallback ──────────
     let assigneeId = null;
     if (!isAutoApprove) {
-      // ดึง supervisor ของ user และตรวจ role
-      const [supRows] = await conn.query(
-        `SELECT u2.id, u2.role
-         FROM users u1
-         JOIN users u2 ON u2.id = u1.supervisor_id
-         WHERE u1.id = ?`,
-        [req.user.id]
-      );
-
-      if (supRows[0]) {
-        // supervisor มีอยู่และ role ถูกต้อง → ใช้เลย
-        assigneeId = supRows[0].id;
-      } else {
-        // ไม่มี supervisor → fallback หา lead ใน department เดียวกัน
-        const [leadRows] = await conn.query(
-          `SELECT id FROM users
-           WHERE department = (SELECT department FROM users WHERE id = ?)
-             AND role = 'lead'
-           LIMIT 1`,
-          [req.user.id]
-        );
-        assigneeId = leadRows[0]?.id ?? null;
-        // ถ้าไม่มี lead ใน dept → หา assistant manager
-        if (!assigneeId) {
-          const [amRows] = await conn.query(
-            `SELECT id FROM users
-             WHERE department = (SELECT department FROM users WHERE id = ?)
-               AND role = 'assistant manager'
-             LIMIT 1`,
-            [req.user.id]
-          );
-          assigneeId = amRows[0]?.id ?? null;
-        }
-      }
+      assigneeId = await findInitialAssignee(conn, req.user.id);
     }
 
     const [result] = await conn.query(

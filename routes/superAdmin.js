@@ -52,7 +52,7 @@ router.get("/audit-logs/actions", async (req, res, next) => {
 router.get("/users", async (req, res, next) => {
   try {
     const { role, department, search } = req.query;
-    const where = ["1=1"];
+    const where = ["is_active = 1"];
     const params = [];
 
     if (role) { where.push("role = ?"); params.push(role); }
@@ -81,7 +81,7 @@ router.post("/users", csrfProtect, async (req, res, next) => {
     const allowedRoles = ["user", "lead", "assistant manager", "manager", "admin"];
     if (!allowedRoles.includes(role)) return res.status(400).json({ message: "role ไม่ถูกต้อง" });
 
-    const [exist] = await pool.query("SELECT id FROM users WHERE employee_code = ? LIMIT 1", [employee_code]);
+    const [exist] = await pool.query("SELECT id FROM users WHERE employee_code = ? AND is_active = 1 LIMIT 1", [employee_code]);
     if (exist[0]) return res.status(409).json({ message: "employee_code ซ้ำ" });
 
     const hashed = await bcrypt.hash(password, 10);
@@ -104,7 +104,7 @@ router.patch("/users/:id/role", csrfProtect, async (req, res, next) => {
     const allowedRoles = ["user", "lead", "assistant manager", "manager", "admin"];
     if (!allowedRoles.includes(role)) return res.status(400).json({ message: "role ไม่ถูกต้อง" });
 
-    const [rows] = await pool.query("SELECT id, employee_code, full_name, role FROM users WHERE id = ? LIMIT 1", [req.params.id]);
+    const [rows] = await pool.query("SELECT id, employee_code, full_name, role FROM users WHERE id = ? AND is_active = 1 LIMIT 1", [req.params.id]);
     if (!rows[0]) return res.status(404).json({ message: "ไม่พบผู้ใช้งาน" });
     if (rows[0].id === req.user.id) return res.status(400).json({ message: "ไม่สามารถเปลี่ยน role ของตัวเองได้" });
 
@@ -137,7 +137,7 @@ router.patch("/users/:id/password", csrfProtect, async (req, res, next) => {
     }
 
     const [rows] = await pool.query(
-      "SELECT id, employee_code, full_name, role FROM users WHERE id = ? LIMIT 1",
+      "SELECT id, employee_code, full_name, role FROM users WHERE id = ? AND is_active = 1 LIMIT 1",
       [req.params.id]
     );
     if (!rows[0]) return res.status(404).json({ message: "ไม่พบผู้ใช้งาน" });
@@ -160,7 +160,7 @@ router.patch("/users/:id/password", csrfProtect, async (req, res, next) => {
 router.patch("/users/:id/supervisor", csrfProtect, async (req, res, next) => {
   try {
     const { supervisor_id } = req.body;
-    const [userRows] = await pool.query("SELECT id, employee_code, supervisor_id FROM users WHERE id = ? LIMIT 1", [req.params.id]);
+    const [userRows] = await pool.query("SELECT id, employee_code, supervisor_id FROM users WHERE id = ? AND is_active = 1 LIMIT 1", [req.params.id]);
 
     if (!userRows[0]) return res.status(404).json({ message: "ไม่พบผู้ใช้งาน" });
     if (supervisor_id && Number(supervisor_id) === Number(req.params.id)) return res.status(400).json({ message: "ตั้งตัวเองเป็นหัวหน้าไม่ได้" });
@@ -174,16 +174,25 @@ router.patch("/users/:id/supervisor", csrfProtect, async (req, res, next) => {
 });
 
 router.delete("/users/:id", csrfProtect, async (req, res, next) => {
+  const conn = await pool.getConnection();
   try {
-    const [rows] = await pool.query("SELECT id, employee_code, full_name, role FROM users WHERE id = ? LIMIT 1", [req.params.id]);
+    const [rows] = await conn.query("SELECT id, employee_code, full_name, role FROM users WHERE id = ? AND is_active = 1 LIMIT 1", [req.params.id]);
     if (!rows[0]) return res.status(404).json({ message: "ไม่พบผู้ใช้งาน" });
     if (rows[0].id === req.user.id) return res.status(400).json({ message: "ไม่สามารถลบตัวเองได้" });
 
-    await pool.query("DELETE FROM users WHERE id = ?", [req.params.id]);
-    await logAudit({ req, action: "user.delete", targetType: "user", targetId: rows[0].id, before: rows[0], note: `ลบ user ${rows[0].employee_code}` });
+    await conn.beginTransaction();
+    await conn.query("UPDATE users SET supervisor_id = NULL WHERE supervisor_id = ?", [req.params.id]);
+    await conn.query("UPDATE users SET is_active = 0, supervisor_id = NULL WHERE id = ?", [req.params.id]);
+    await logAudit({ req, action: "user.delete", targetType: "user", targetId: rows[0].id, before: rows[0], note: `ลบ user ${rows[0].employee_code}`, conn });
+    await conn.commit();
 
     res.json({ message: "ลบผู้ใช้งานเรียบร้อย" });
-  } catch (err) { next(err); }
+  } catch (err) {
+    await conn.rollback();
+    next(err);
+  } finally {
+    conn.release();
+  }
 });
 
 export default router;

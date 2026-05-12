@@ -1,11 +1,11 @@
 -- phpMyAdmin SQL Dump
--- version 5.2.1deb3
+-- version 5.2.1
 -- https://www.phpmyadmin.net/
 --
--- Host: localhost:3306
--- Generation Time: May 11, 2026 at 07:14 AM
--- Server version: 8.0.45-0ubuntu0.24.04.1
--- PHP Version: 8.3.6
+-- Host: 127.0.0.1
+-- Generation Time: May 11, 2026 at 03:20 AM
+-- Server version: 10.4.32-MariaDB
+-- PHP Version: 8.0.30
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
 START TRANSACTION;
@@ -28,19 +28,19 @@ SET time_zone = "+00:00";
 --
 
 CREATE TABLE `audit_logs` (
-  `id` int NOT NULL,
-  `actor_id` int NOT NULL,
-  `actor_role` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `action` varchar(60) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `target_type` varchar(40) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `target_id` int DEFAULT NULL,
-  `before_data` longtext COLLATE utf8mb4_unicode_ci,
-  `after_data` longtext COLLATE utf8mb4_unicode_ci,
-  `note` text COLLATE utf8mb4_unicode_ci,
-  `ip_address` varchar(45) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `user_agent` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
-) ;
+  `id` int(11) NOT NULL,
+  `actor_id` int(11) NOT NULL,
+  `actor_role` varchar(20) NOT NULL,
+  `action` varchar(60) NOT NULL,
+  `target_type` varchar(40) DEFAULT NULL,
+  `target_id` int(11) DEFAULT NULL,
+  `before_data` longtext DEFAULT NULL CHECK (json_valid(`before_data`) or `before_data` is null),
+  `after_data` longtext DEFAULT NULL CHECK (json_valid(`after_data`) or `after_data` is null),
+  `note` text DEFAULT NULL,
+  `ip_address` varchar(45) DEFAULT NULL,
+  `user_agent` varchar(255) DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Immutable audit trail';
 
 --
 -- Dumping data for table `audit_logs`
@@ -131,18 +131,7 @@ INSERT INTO `audit_logs` (`id`, `actor_id`, `actor_role`, `action`, `target_type
 (82, 17, 'admin', 'leave.create', 'leave_request', 29, NULL, '{\"leave_type_id\":1,\"start_date\":\"2026-05-07\",\"end_date\":\"2026-05-07\",\"start_time\":null,\"end_time\":null,\"total_days\":1,\"request_type\":\"leave\",\"reason\":\"test noti2\\n\",\"status\":\"pending\",\"attachments\":[]}', NULL, '127.0.0.1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36 Edg/147.0.0.0', '2026-05-07 10:47:13'),
 (83, 17, 'admin', 'leave.create', 'leave_request', 30, NULL, '{\"leave_type_id\":2,\"start_date\":\"2026-05-07\",\"end_date\":\"2026-05-07\",\"start_time\":null,\"end_time\":null,\"total_days\":1,\"request_type\":\"leave\",\"reason\":\"test noti3\",\"status\":\"pending\",\"attachments\":[]}', NULL, '127.0.0.1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36 Edg/147.0.0.0', '2026-05-07 10:53:20'),
 (84, 17, 'admin', 'leave.approve', 'leave_request', 30, '{\"status\":\"pending\",\"approved_by\":null,\"approved_at\":null,\"current_assignee_id\":3}', '{\"status\":\"approved\",\"approved_by\":17,\"approved_at\":\"2026-05-07T04:07:21.003Z\",\"comment\":\"\"}', '', '127.0.0.1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36 Edg/147.0.0.0', '2026-05-07 11:07:21'),
-(85, 11, 'user', 'leave.create', 'leave_request', 31, NULL, '{\"leave_type_id\":\"1\",\"start_date\":\"2026-05-07\",\"end_date\":\"2026-05-07\",\"start_time\":null,\"end_time\":null,\"total_days\":\"1\",\"request_type\":\"leave\",\"reason\":\"test noti\",\"status\":\"pending\",\"attachments\":[{\"original_name\":\"ลังน้ำเชื่อมเข้มข้น.png\",\"mime_type\":\"image/png\",\"size\":1558129}]}', NULL, '127.0.0.1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-07 11:19:54'),
-(86, 21, 'user', 'leave.create', 'leave_request', 32, NULL, '{\"leave_type_id\":\"1\",\"start_date\":\"2026-05-11\",\"end_date\":\"2026-05-11\",\"start_time\":null,\"end_time\":null,\"total_days\":\"1\",\"request_type\":\"leave\",\"reason\":\"test\",\"status\":\"pending\",\"attachments\":[{\"original_name\":\"receipt.jpg\",\"mime_type\":\"image/jpeg\",\"size\":279726}]}', NULL, '192.168.0.208', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0', '2026-05-11 04:26:52'),
-(87, 17, 'admin', 'admin.assign_subordinate', 'user', 18, NULL, '{\"supervisor_id\":18,\"full_name\":\"test\"}', 'กำหนด manager 18 เป็นลูกน้อง', '192.168.0.208', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:150.0) Gecko/20100101 Firefox/150.0', '2026-05-11 04:29:16'),
-(88, 12, 'user', 'leave.create', 'leave_request', 33, NULL, '{\"leave_type_id\":\"1\",\"start_date\":\"2026-05-11\",\"end_date\":\"2026-05-11\",\"start_time\":null,\"end_time\":null,\"total_days\":\"1\",\"request_type\":\"leave\",\"reason\":\"test\",\"status\":\"pending\",\"attachments\":[{\"original_name\":\"ลังน้ำเชื่อมเข้มข้น.png\",\"mime_type\":\"image/png\",\"size\":1558129}]}', NULL, '192.168.0.208', 'Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Mobile Safari/537.36 Edg/148.0.0.0', '2026-05-11 04:32:47'),
-(89, 12, 'user', 'leave.cancel', 'leave_request', 33, '{\"status\":\"pending\",\"start_date\":\"2026-05-11T00:00:00.000Z\",\"end_date\":\"2026-05-11T00:00:00.000Z\",\"total_days\":\"1.00\",\"reason\":\"test\"}', NULL, NULL, '192.168.0.208', 'Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Mobile Safari/537.36 Edg/148.0.0.0', '2026-05-11 04:36:41'),
-(90, 12, 'user', 'leave.create', 'leave_request', 34, NULL, '{\"leave_type_id\":\"1\",\"start_date\":\"2026-05-04\",\"end_date\":\"2026-05-04\",\"start_time\":null,\"end_time\":null,\"total_days\":\"1\",\"request_type\":\"leave\",\"reason\":\"test\",\"status\":\"pending\",\"attachments\":[{\"original_name\":\"ลังน้ำเชื่อมละลายเร็ว.png\",\"mime_type\":\"image/png\",\"size\":2676379}]}', NULL, '192.168.0.208', 'Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Mobile Safari/537.36 Edg/148.0.0.0', '2026-05-11 04:37:06'),
-(91, 12, 'user', 'leave.cancel', 'leave_request', 34, '{\"status\":\"pending\",\"start_date\":\"2026-05-04T00:00:00.000Z\",\"end_date\":\"2026-05-04T00:00:00.000Z\",\"total_days\":\"1.00\",\"reason\":\"test\"}', NULL, NULL, '192.168.0.208', 'Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Mobile Safari/537.36 Edg/148.0.0.0', '2026-05-11 04:46:24'),
-(92, 12, 'user', 'leave.create', 'leave_request', 35, NULL, '{\"leave_type_id\":\"1\",\"start_date\":\"2026-05-18\",\"end_date\":\"2026-05-18\",\"start_time\":null,\"end_time\":null,\"total_days\":\"1\",\"request_type\":\"leave\",\"reason\":\"dada\",\"status\":\"pending\",\"attachments\":[{\"original_name\":\"receipt.jpg\",\"mime_type\":\"image/jpeg\",\"size\":279726}]}', NULL, '192.168.0.208', 'Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Mobile Safari/537.36 Edg/148.0.0.0', '2026-05-11 04:46:57'),
-(93, 12, 'user', 'leave.create', 'leave_request', 36, NULL, '{\"leave_type_id\":\"1\",\"start_date\":\"2026-05-11\",\"end_date\":\"2026-05-11\",\"start_time\":null,\"end_time\":null,\"total_days\":\"1\",\"request_type\":\"leave\",\"reason\":\"test\",\"status\":\"pending\",\"attachments\":[{\"original_name\":\"Screenshot 2026-03-11 082136.png\",\"mime_type\":\"image/png\",\"size\":9249}]}', NULL, '192.168.0.208', 'Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Mobile Safari/537.36 Edg/148.0.0.0', '2026-05-11 04:49:56'),
-(94, 12, 'user', 'leave.cancel', 'leave_request', 36, '{\"status\":\"pending\",\"start_date\":\"2026-05-11T00:00:00.000Z\",\"end_date\":\"2026-05-11T00:00:00.000Z\",\"total_days\":\"1.00\",\"reason\":\"test\"}', NULL, NULL, '192.168.0.208', 'Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Mobile Safari/537.36 Edg/148.0.0.0', '2026-05-11 06:07:36'),
-(95, 12, 'user', 'leave.cancel', 'leave_request', 35, '{\"status\":\"pending\",\"start_date\":\"2026-05-18T00:00:00.000Z\",\"end_date\":\"2026-05-18T00:00:00.000Z\",\"total_days\":\"1.00\",\"reason\":\"dada\"}', NULL, NULL, '192.168.0.208', 'Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Mobile Safari/537.36 Edg/148.0.0.0', '2026-05-11 06:07:40'),
-(96, 12, 'user', 'leave.create', 'leave_request', 37, NULL, '{\"leave_type_id\":\"1\",\"start_date\":\"2026-05-18\",\"end_date\":\"2026-05-18\",\"start_time\":null,\"end_time\":null,\"total_days\":\"1\",\"request_type\":\"leave\",\"reason\":\"aa\",\"status\":\"pending\",\"attachments\":[{\"original_name\":\"Screenshot 2026-03-12 103059.png\",\"mime_type\":\"image/png\",\"size\":98877}]}', NULL, '192.168.0.208', 'Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Mobile Safari/537.36 Edg/148.0.0.0', '2026-05-11 06:08:12');
+(85, 11, 'user', 'leave.create', 'leave_request', 31, NULL, '{\"leave_type_id\":\"1\",\"start_date\":\"2026-05-07\",\"end_date\":\"2026-05-07\",\"start_time\":null,\"end_time\":null,\"total_days\":\"1\",\"request_type\":\"leave\",\"reason\":\"test noti\",\"status\":\"pending\",\"attachments\":[{\"original_name\":\"ลังน้ำเชื่อมเข้มข้น.png\",\"mime_type\":\"image/png\",\"size\":1558129}]}', NULL, '127.0.0.1', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36', '2026-05-07 11:19:54');
 
 -- --------------------------------------------------------
 
@@ -151,9 +140,9 @@ INSERT INTO `audit_logs` (`id`, `actor_id`, `actor_role`, `action`, `target_type
 --
 
 CREATE TABLE `departments` (
-  `id` int NOT NULL,
-  `name` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+  `id` int(11) NOT NULL,
+  `name` varchar(255) NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
@@ -172,11 +161,11 @@ INSERT INTO `departments` (`id`, `name`, `created_at`) VALUES
 --
 
 CREATE TABLE `leave_approvals` (
-  `id` int NOT NULL,
-  `leave_request_id` int DEFAULT NULL,
-  `approver_id` int DEFAULT NULL,
-  `status` enum('pending','approved','rejected') COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `comment` text COLLATE utf8mb4_unicode_ci,
+  `id` int(11) NOT NULL,
+  `leave_request_id` int(11) DEFAULT NULL,
+  `approver_id` int(11) DEFAULT NULL,
+  `status` enum('pending','approved','rejected') DEFAULT NULL,
+  `comment` text DEFAULT NULL,
   `approved_at` datetime DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -206,12 +195,12 @@ INSERT INTO `leave_approvals` (`id`, `leave_request_id`, `approver_id`, `status`
 --
 
 CREATE TABLE `leave_balances` (
-  `id` int NOT NULL,
-  `user_id` int DEFAULT NULL,
-  `leave_type_id` int DEFAULT NULL,
-  `total_days` int DEFAULT NULL,
-  `used_days` int DEFAULT '0',
-  `year` int DEFAULT NULL
+  `id` int(11) NOT NULL,
+  `user_id` int(11) DEFAULT NULL,
+  `leave_type_id` int(11) DEFAULT NULL,
+  `total_days` int(11) DEFAULT NULL,
+  `used_days` int(11) DEFAULT 0,
+  `year` int(11) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
@@ -314,21 +303,21 @@ INSERT INTO `leave_balances` (`id`, `user_id`, `leave_type_id`, `total_days`, `u
 --
 
 CREATE TABLE `leave_requests` (
-  `id` int NOT NULL,
-  `user_id` int DEFAULT NULL,
-  `leave_type_id` int DEFAULT NULL,
+  `id` int(11) NOT NULL,
+  `user_id` int(11) DEFAULT NULL,
+  `leave_type_id` int(11) DEFAULT NULL,
   `start_date` date DEFAULT NULL,
   `end_date` date DEFAULT NULL,
   `start_time` time DEFAULT NULL,
   `end_time` time DEFAULT NULL,
   `total_days` decimal(5,2) DEFAULT NULL,
-  `request_type` enum('leave','late') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'leave',
-  `reason` text COLLATE utf8mb4_unicode_ci,
-  `status` enum('pending','approved','rejected') COLLATE utf8mb4_unicode_ci DEFAULT 'pending',
-  `current_assignee_id` int DEFAULT NULL,
-  `approved_by` int DEFAULT NULL,
+  `request_type` enum('leave','late') NOT NULL DEFAULT 'leave',
+  `reason` text DEFAULT NULL,
+  `status` enum('pending','approved','rejected') DEFAULT 'pending',
+  `current_assignee_id` int(11) DEFAULT NULL,
+  `approved_by` int(11) DEFAULT NULL,
   `approved_at` datetime DEFAULT NULL,
-  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
@@ -355,9 +344,7 @@ INSERT INTO `leave_requests` (`id`, `user_id`, `leave_type_id`, `start_date`, `e
 (28, 17, 1, '2026-05-07', '2026-05-07', NULL, NULL, 1.00, 'leave', 'test noti', 'pending', 3, NULL, NULL, '2026-05-07 03:46:24'),
 (29, 17, 1, '2026-05-07', '2026-05-07', NULL, NULL, 1.00, 'leave', 'test noti2\n', 'pending', 3, NULL, NULL, '2026-05-07 03:47:13'),
 (30, 17, 2, '2026-05-07', '2026-05-07', NULL, NULL, 1.00, 'leave', 'test noti3', 'approved', NULL, 17, '2026-05-07 11:07:21', '2026-05-07 03:53:20'),
-(31, 11, 1, '2026-05-07', '2026-05-07', NULL, NULL, 1.00, 'leave', 'test noti', 'pending', 8, NULL, NULL, '2026-05-07 04:19:54'),
-(32, 21, 1, '2026-05-11', '2026-05-11', NULL, NULL, 1.00, 'leave', 'test', 'pending', 18, NULL, NULL, '2026-05-11 04:26:52'),
-(37, 12, 1, '2026-05-18', '2026-05-18', NULL, NULL, 1.00, 'leave', 'aa', 'pending', 5, NULL, NULL, '2026-05-11 06:08:12');
+(31, 11, 1, '2026-05-07', '2026-05-07', NULL, NULL, 1.00, 'leave', 'test noti', 'pending', 8, NULL, NULL, '2026-05-07 04:19:54');
 
 -- --------------------------------------------------------
 
@@ -366,13 +353,13 @@ INSERT INTO `leave_requests` (`id`, `user_id`, `leave_type_id`, `start_date`, `e
 --
 
 CREATE TABLE `leave_request_attachments` (
-  `id` int NOT NULL,
-  `leave_request_id` int NOT NULL,
-  `original_name` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `stored_name` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `mime_type` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `size` int NOT NULL,
-  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+  `id` int(11) NOT NULL,
+  `leave_request_id` int(11) NOT NULL,
+  `original_name` varchar(255) NOT NULL,
+  `stored_name` varchar(255) NOT NULL,
+  `mime_type` varchar(100) NOT NULL,
+  `size` int(11) NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
@@ -383,9 +370,7 @@ INSERT INTO `leave_request_attachments` (`id`, `leave_request_id`, `original_nam
 (1, 21, 'à¸¥à¸±à¸à¸à¹à¸³à¹à¸à¸·à¹à¸­à¸¡à¹à¸à¹à¸¡à¸à¹à¸.png', '1778034733324-159577568.png', 'image/png', 1558129, '2026-05-06 02:32:13'),
 (2, 22, 'ลังน้ำเชื่อมละลายเร็ว.png', '1778037590172-336102438.png', 'image/png', 2676379, '2026-05-06 03:19:50'),
 (3, 23, 'receipt.jpg', '1778054730752-3218114.jpg', 'image/jpeg', 279726, '2026-05-06 08:05:30'),
-(4, 31, 'ลังน้ำเชื่อมเข้มข้น.png', '1778127594575-960020349.png', 'image/png', 1558129, '2026-05-07 04:19:54'),
-(5, 32, 'receipt.jpg', '1778473612187-920273544.jpg', 'image/jpeg', 279726, '2026-05-11 04:26:52'),
-(10, 37, 'Screenshot 2026-03-12 103059.png', '1778479692379-515590589.png', 'image/png', 98877, '2026-05-11 06:08:12');
+(4, 31, 'ลังน้ำเชื่อมเข้มข้น.png', '1778127594575-960020349.png', 'image/png', 1558129, '2026-05-07 04:19:54');
 
 -- --------------------------------------------------------
 
@@ -394,11 +379,11 @@ INSERT INTO `leave_request_attachments` (`id`, `leave_request_id`, `original_nam
 --
 
 CREATE TABLE `leave_types` (
-  `id` int NOT NULL,
-  `name` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `description` text COLLATE utf8mb4_unicode_ci,
-  `max_days` int DEFAULT NULL,
-  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+  `id` int(11) NOT NULL,
+  `name` varchar(100) DEFAULT NULL,
+  `description` text DEFAULT NULL,
+  `max_days` int(11) DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
@@ -418,11 +403,11 @@ INSERT INTO `leave_types` (`id`, `name`, `description`, `max_days`, `created_at`
 --
 
 CREATE TABLE `ot_approvals` (
-  `id` int NOT NULL,
-  `ot_request_id` int DEFAULT NULL,
-  `approver_id` int DEFAULT NULL,
-  `status` enum('pending','approved','rejected') COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `comment` text COLLATE utf8mb4_unicode_ci,
+  `id` int(11) NOT NULL,
+  `ot_request_id` int(11) DEFAULT NULL,
+  `approver_id` int(11) DEFAULT NULL,
+  `status` enum('pending','approved','rejected') DEFAULT NULL,
+  `comment` text DEFAULT NULL,
   `approved_at` datetime DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -433,18 +418,18 @@ CREATE TABLE `ot_approvals` (
 --
 
 CREATE TABLE `ot_requests` (
-  `id` int NOT NULL,
-  `user_id` int NOT NULL,
+  `id` int(11) NOT NULL,
+  `user_id` int(11) NOT NULL,
   `ot_date` date NOT NULL,
   `start_time` time NOT NULL,
   `end_time` time NOT NULL,
   `total_hours` decimal(5,2) DEFAULT NULL,
-  `reason` text COLLATE utf8mb4_unicode_ci,
-  `status` enum('pending','approved','rejected') COLLATE utf8mb4_unicode_ci DEFAULT 'pending',
-  `current_assignee_id` int DEFAULT NULL,
-  `approved_by` int DEFAULT NULL,
+  `reason` text DEFAULT NULL,
+  `status` enum('pending','approved','rejected') DEFAULT 'pending',
+  `current_assignee_id` int(11) DEFAULT NULL,
+  `approved_by` int(11) DEFAULT NULL,
   `approved_at` datetime DEFAULT NULL,
-  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
@@ -461,17 +446,17 @@ INSERT INTO `ot_requests` (`id`, `user_id`, `ot_date`, `start_time`, `end_time`,
 --
 
 CREATE TABLE `users` (
-  `id` int NOT NULL,
-  `employee_code` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `full_name` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `department` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `password` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `role` enum('user','lead','assistant manager','manager','admin') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'user',
-  `supervisor_id` int DEFAULT NULL,
-  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `email` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `email_2` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `phone` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `id` int(11) NOT NULL,
+  `employee_code` varchar(50) DEFAULT NULL,
+  `full_name` varchar(255) DEFAULT NULL,
+  `department` varchar(255) DEFAULT NULL,
+  `password` varchar(255) DEFAULT NULL,
+  `role` enum('user','lead','assistant manager','manager','admin') NOT NULL DEFAULT 'user',
+  `supervisor_id` int(11) DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  `email` varchar(255) DEFAULT NULL,
+  `email_2` varchar(255) DEFAULT NULL,
+  `phone` varchar(50) DEFAULT NULL,
   `is_active` tinyint(1) NOT NULL DEFAULT '1'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -480,28 +465,28 @@ CREATE TABLE `users` (
 --
 
 INSERT INTO `users` (`id`, `employee_code`, `full_name`, `department`, `password`, `role`, `supervisor_id`, `created_at`, `email`, `email_2`, `phone`) VALUES
-(1, 'MKT-0001', 'นางสาวปวิดา  กาญจนางกูล', 'การตลาด', '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'manager', NULL, '2024-01-10 08:00:00', 'pawidackapsweet@outlook.com', '', ''),
-(2, 'MKT-0002', 'นางสาวภัทรา  พงษ์การุณ', 'การตลาด', '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'assistant manager', 1, '2024-01-10 08:05:00', 'phatthrackapsweet@outlook.com', '', ''),
-(3, 'MKT-0003', 'นายพูนศักดิ์  วงศ์มกรพันธ์', 'การตลาด', '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'lead', 2, '2024-01-15 09:00:00', 'poonsakckapsweet@outlook.com', '', ''),
-(4, 'MKT-0004', 'นางสาวอนงค์กานต์  เหียดใส', 'การตลาด', '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'lead', 2, '2024-01-15 09:10:00', 'anongkarnckapsweet@outlook.com', '', ''),
-(5, 'MKT-0005', 'นางสาวพรปวีณ์  เทพวิจิตร์', 'การตลาด', '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'lead', 2, '2024-01-16 09:00:00', 'p.paweeckapsweet@outlook.com', '', ''),
-(6, 'MKT-0006', 'นางสาวนพวรรณ  ศรีเสริม', 'การตลาด', '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'lead', 2, '2024-01-16 09:15:00', 'noppawanckapsweet@outlook.com', '', ''),
-(7, 'MKT-0007', 'นางสาวสุภาภรณ์  จ้อยวงศ์', 'การตลาด', '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'lead', 2, '2024-01-17 09:00:00', 'Team1ckapsweet@outlook.com', '', ''),
-(8, 'MKT-0008', 'นางสาวรวิวรรณ  อนุตรี', 'การตลาด', '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'lead', 1, '2024-01-17 09:20:00', 'rawiwunckapsweet@outlook.com', '', ''),
+(1, 'MKT-0001', 'นางสาวปวิดา  กาญจนางกูล', 'การตลาด', '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'manager', NULL, '2024-01-10 08:00:00', '', '', ''),
+(2, 'MKT-0002', 'นางสาวภัทรา  พงษ์การุณ', 'การตลาด', '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'assistant manager', 1, '2024-01-10 08:05:00', '', '', ''),
+(3, 'MKT-0003', 'นายพูนศักดิ์  วงศ์มกรพันธ์', 'การตลาด', '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'lead', 2, '2024-01-15 09:00:00', '', '', ''),
+(4, 'MKT-0004', 'นางสาวอนงค์กานต์  เหียดใส', 'การตลาด', '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'lead', 2, '2024-01-15 09:10:00', '', '', ''),
+(5, 'MKT-0005', 'นางสาวพรปวีณ์  เทพวิจิตร์', 'การตลาด', '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'lead', 2, '2024-01-16 09:00:00', '', '', ''),
+(6, 'MKT-0006', 'นางสาวนพวรรณ  ศรีเสริม', 'การตลาด', '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'lead', 2, '2024-01-16 09:15:00', '', '', ''),
+(7, 'MKT-0007', 'นางสาวสุภาภรณ์  จ้อยวงศ์', 'การตลาด', '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'lead', 2, '2024-01-17 09:00:00', '', '', ''),
+(8, 'MKT-0008', 'นางสาวรวิวรรณ  อนุตรี', 'การตลาด', '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'lead', 1, '2024-01-17 09:20:00', '', '', ''),
 (9, 'MKT-0009', 'นางสาวจันทรรัตน์  อดิศรวรกิจ', 'การตลาด', '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user', 8, '2024-01-18 09:00:00', '', '', ''),
-(10, 'MKT-0010', 'นางสาวอาจรีย์  ทุ่งราช', 'การตลาด', '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user', 7, '2024-01-18 09:30:00', 'team2ckapsweet@outlook.com', '', ''),
-(11, 'MKT-0011', 'นางสาวพุทธพร  พัดจีบ', 'การตลาด', '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user', 8, '2024-01-18 09:30:00', 'mktcenter@outlook.com', '', ''),
-(12, 'MKT-0012', 'นางสาวนัชนก  ไชยแป้น', 'การตลาด', '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user', 5, '2024-01-18 09:30:00', 'salesckapsweet@outlook.com', '', ''),
-(13, 'MKT-0013', 'นางสาวปานไพลิน  ปินใจ', 'การตลาด', '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user', 4, '2024-01-18 09:30:00', 'parnpailinckapsweet@outlook.com', '', ''),
+(10, 'MKT-0010', 'นางสาวอาจรีย์  ทุ่งราช', 'การตลาด', '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user', 7, '2024-01-18 09:30:00', '', '', ''),
+(11, 'MKT-0011', 'นางสาวพุทธพร  พัดจีบ', 'การตลาด', '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user', 8, '2024-01-18 09:30:00', '', '', ''),
+(12, 'MKT-0012', 'นางสาวนัชนก  ไชยแป้น', 'การตลาด', '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user', 5, '2024-01-18 09:30:00', '', '', ''),
+(13, 'MKT-0013', 'นางสาวปานไพลิน  ปินใจ', 'การตลาด', '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user', 4, '2024-01-18 09:30:00', '', '', ''),
 (14, 'MKT-0014', 'นางสาวธิษณา  ธัญญวิชยเวช', 'การตลาด', '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user', 8, '2024-01-18 09:30:00', '', '', ''),
 (15, 'MKT-0015', 'นายวินัย  ลูกปัด', 'การตลาด', '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user', 3, '2024-01-18 09:30:00', '', '', ''),
 (16, 'MKT-0016', 'นายชยพล  อุ่มเจริญ', 'การตลาด', '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'user', 3, '2024-01-18 09:30:00', '', '', ''),
-(17, 'test-0001', 'นายทดสอบระบบ', 'test', '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'admin', NULL, '2024-01-18 09:30:00', 'test@test.com', 'test@test.com', '1150'),
-(18, 'test-002', 'test', 'test', '$2b$10$1jtjQ2/u4YlNQfU24HLCB.zRM6orFD4ps9xH9P.9sB7g9D7c5I7TO', 'manager', 18, '2026-05-05 01:01:23', '', '', ''),
+(17, 'test-0001', 'นายทดสอบระบบ', 'การตลาด', '$2b$10$tmAJpS106x3jW7jLFhbrPOBviIhXp1spJzAybxPR1HOLg6tSbYn8C', 'admin', NULL, '2024-01-18 09:30:00', 'test@test.com', 'test@test.com', '1150'),
+(18, 'test-002', 'test', 'test', '$2b$10$1jtjQ2/u4YlNQfU24HLCB.zRM6orFD4ps9xH9P.9sB7g9D7c5I7TO', 'manager', NULL, '2026-05-05 01:01:23', '', '', ''),
 (19, 'test-003', 'test2', 'test', '$2b$10$7sqPVmdVrV.GHdXdLHD9fuI00inaJlavy.U4Iu31n5My6/E1wK25y', 'assistant manager', 18, '2026-05-05 01:02:06', '', '', ''),
 (20, 'test-004', 'test3', 'test', '$2b$10$.qnuWz/AUwkD.Lys8JmS0OkPo551kHvIC3u9DgOsuskRWD.Igw4CS', 'lead', 18, '2026-05-05 01:02:28', '', '', ''),
 (21, 'test-005', 'test', 'test', '$2b$10$ZXfnR.282qGOvb7kXH3AAeEBwEG3glsvOFWAuxhW1HG7hK62eRtC6', 'user', 18, '2026-05-05 01:02:47', '', '', ''),
-(22, 'MKT-0017', 'นางสาวกนกวรรณ  แซ่ฉั่ว', 'การตลาด', '$2b$10$suCEG1o6.8JvC8h8M7BrleaVdeOIALFRM4cuBwOpUkguyrFA/msv.', 'user', 6, '2026-05-05 06:35:25', 'technicianckapsweet@outlook.com', '', '');
+(22, 'MKT-0017', 'นางสาวกนกวรรณ  แซ่ฉั่ว', 'การตลาด', '$2b$10$suCEG1o6.8JvC8h8M7BrleaVdeOIALFRM4cuBwOpUkguyrFA/msv.', 'user', 6, '2026-05-05 06:35:25', '', '', '');
 
 -- --------------------------------------------------------
 
@@ -510,12 +495,12 @@ INSERT INTO `users` (`id`, `employee_code`, `full_name`, `department`, `password
 --
 
 CREATE TABLE `user_leave_pool` (
-  `id` int NOT NULL,
-  `user_id` int NOT NULL,
-  `total_days` decimal(6,2) NOT NULL DEFAULT '0.00',
-  `used_days` decimal(6,2) NOT NULL DEFAULT '0.00',
-  `year` int NOT NULL,
-  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  `id` int(11) NOT NULL,
+  `user_id` int(11) NOT NULL,
+  `total_days` decimal(6,2) NOT NULL DEFAULT 0.00,
+  `used_days` decimal(6,2) NOT NULL DEFAULT 0.00,
+  `year` int(11) NOT NULL,
+  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
@@ -552,16 +537,16 @@ INSERT INTO `user_leave_pool` (`id`, `user_id`, `total_days`, `used_days`, `year
 -- (See below for the actual view)
 --
 CREATE TABLE `v_audit_logs` (
-`id` int
+`id` int(11)
 ,`created_at` datetime
 ,`action` varchar(60)
 ,`target_type` varchar(40)
-,`target_id` int
+,`target_id` int(11)
 ,`before_data` longtext
 ,`after_data` longtext
 ,`note` text
 ,`ip_address` varchar(45)
-,`actor_id` int
+,`actor_id` int(11)
 ,`actor_role` varchar(20)
 ,`actor_name` varchar(255)
 ,`actor_code` varchar(50)
@@ -575,7 +560,7 @@ CREATE TABLE `v_audit_logs` (
 --
 DROP TABLE IF EXISTS `v_audit_logs`;
 
-CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `v_audit_logs`  AS SELECT `al`.`id` AS `id`, `al`.`created_at` AS `created_at`, `al`.`action` AS `action`, `al`.`target_type` AS `target_type`, `al`.`target_id` AS `target_id`, `al`.`before_data` AS `before_data`, `al`.`after_data` AS `after_data`, `al`.`note` AS `note`, `al`.`ip_address` AS `ip_address`, `al`.`actor_id` AS `actor_id`, `al`.`actor_role` AS `actor_role`, `u`.`full_name` AS `actor_name`, `u`.`employee_code` AS `actor_code`, `u`.`department` AS `actor_dept` FROM (`audit_logs` `al` join `users` `u` on((`u`.`id` = `al`.`actor_id`))) ORDER BY `al`.`created_at` DESC ;
+CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `v_audit_logs`  AS SELECT `al`.`id` AS `id`, `al`.`created_at` AS `created_at`, `al`.`action` AS `action`, `al`.`target_type` AS `target_type`, `al`.`target_id` AS `target_id`, `al`.`before_data` AS `before_data`, `al`.`after_data` AS `after_data`, `al`.`note` AS `note`, `al`.`ip_address` AS `ip_address`, `al`.`actor_id` AS `actor_id`, `al`.`actor_role` AS `actor_role`, `u`.`full_name` AS `actor_name`, `u`.`employee_code` AS `actor_code`, `u`.`department` AS `actor_dept` FROM (`audit_logs` `al` join `users` `u` on(`u`.`id` = `al`.`actor_id`)) ORDER BY `al`.`created_at` DESC ;
 
 --
 -- Indexes for dumped tables
@@ -675,67 +660,67 @@ ALTER TABLE `user_leave_pool`
 -- AUTO_INCREMENT for table `audit_logs`
 --
 ALTER TABLE `audit_logs`
-  MODIFY `id` int NOT NULL AUTO_INCREMENT;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=86;
 
 --
 -- AUTO_INCREMENT for table `departments`
 --
 ALTER TABLE `departments`
-  MODIFY `id` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=8;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=8;
 
 --
 -- AUTO_INCREMENT for table `leave_approvals`
 --
 ALTER TABLE `leave_approvals`
-  MODIFY `id` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=22;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=22;
 
 --
 -- AUTO_INCREMENT for table `leave_balances`
 --
 ALTER TABLE `leave_balances`
-  MODIFY `id` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=120;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=120;
 
 --
 -- AUTO_INCREMENT for table `leave_requests`
 --
 ALTER TABLE `leave_requests`
-  MODIFY `id` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=38;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=32;
 
 --
 -- AUTO_INCREMENT for table `leave_request_attachments`
 --
 ALTER TABLE `leave_request_attachments`
-  MODIFY `id` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=11;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=5;
 
 --
 -- AUTO_INCREMENT for table `leave_types`
 --
 ALTER TABLE `leave_types`
-  MODIFY `id` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=5;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=5;
 
 --
 -- AUTO_INCREMENT for table `ot_approvals`
 --
 ALTER TABLE `ot_approvals`
-  MODIFY `id` int NOT NULL AUTO_INCREMENT;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `ot_requests`
 --
 ALTER TABLE `ot_requests`
-  MODIFY `id` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
 
 --
 -- AUTO_INCREMENT for table `users`
 --
 ALTER TABLE `users`
-  MODIFY `id` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=23;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=23;
 
 --
 -- AUTO_INCREMENT for table `user_leave_pool`
 --
 ALTER TABLE `user_leave_pool`
-  MODIFY `id` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=22;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=22;
 
 --
 -- Constraints for dumped tables
