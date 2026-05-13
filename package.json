@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "nodemon server.js",
     "mail:check": "node scripts/checkMail.js",
+    "migrate:performance": "node migrate_performance_indexes.js",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js"
   },
   "jest": {

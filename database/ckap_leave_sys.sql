@@ -234,16 +234,15 @@ CREATE TABLE `leave_balances` (
 --
 
 INSERT INTO `leave_balances` (`id`, `user_id`, `leave_type_id`, `total_days`, `used_days`, `year`) VALUES
-(33, 1, 1, 30, 0, 2026),
+(33, 1, 1, 30, 2, 2026),
 (34, 1, 2, 3, 0, 2026),
 (35, 1, 3, 10, 0, 2026),
 (36, 1, 4, 5, 0, 2026),
-(37, 1, 1, 30, 1, 2026),
-(38, 18, 1, 30, 0, 2026),
+(38, 18, 1, 30, 1, 2026),
 (39, 18, 2, 3, 0, 2026),
 (40, 18, 3, 10, 0, 2026),
 (41, 18, 4, 5, 0, 2026),
-(42, 3, 1, 30, 1, 2026),
+(42, 3, 1, 30, 2, 2026),
 (43, 19, 1, 30, 0, 2026),
 (44, 19, 2, 3, 0, 2026),
 (45, 19, 3, 10, 0, 2026),
@@ -254,16 +253,13 @@ INSERT INTO `leave_balances` (`id`, `user_id`, `leave_type_id`, `total_days`, `u
 (50, 20, 4, 5, 0, 2026),
 (51, 21, 1, 30, 0, 2026),
 (52, 21, 2, 3, 0, 2026),
-(53, 21, 3, 10, 0, 2026),
+(53, 21, 3, 10, 1, 2026),
 (54, 21, 4, 5, 0, 2026),
-(55, 18, 1, 30, 1, 2026),
-(56, 1, 1, 30, 1, 2026),
 (57, 17, 1, 30, 1, 2026),
 (58, 2, 1, 30, 0, 2026),
 (59, 2, 2, 3, 0, 2026),
 (60, 2, 3, 10, 0, 2026),
 (61, 2, 4, 5, 0, 2026),
-(62, 3, 1, 30, 1, 2026),
 (63, 3, 2, 3, 0, 2026),
 (64, 3, 3, 10, 0, 2026),
 (65, 3, 4, 5, 0, 2026),
@@ -287,7 +283,7 @@ INSERT INTO `leave_balances` (`id`, `user_id`, `leave_type_id`, `total_days`, `u
 (83, 8, 2, 3, 0, 2026),
 (84, 8, 3, 10, 0, 2026),
 (85, 8, 4, 5, 0, 2026),
-(86, 9, 1, 30, 0, 2026),
+(86, 9, 1, 30, 1, 2026),
 (87, 9, 2, 3, 0, 2026),
 (88, 9, 3, 10, 0, 2026),
 (89, 9, 4, 5, 0, 2026),
@@ -319,9 +315,7 @@ INSERT INTO `leave_balances` (`id`, `user_id`, `leave_type_id`, `total_days`, `u
 (115, 22, 2, 3, 0, 2026),
 (116, 22, 3, 10, 0, 2026),
 (117, 22, 4, 5, 0, 2026),
-(118, 9, 1, 30, 1, 2026),
-(119, 17, 2, 3, 1, 2026),
-(120, 21, 3, 10, 1, 2026);
+(119, 17, 2, 3, 1, 2026);
 
 -- --------------------------------------------------------
 
@@ -628,7 +622,8 @@ ALTER TABLE `leave_approvals`
 ALTER TABLE `leave_balances`
   ADD PRIMARY KEY (`id`),
   ADD KEY `user_id` (`user_id`),
-  ADD KEY `leave_type_id` (`leave_type_id`);
+  ADD KEY `leave_type_id` (`leave_type_id`),
+  ADD UNIQUE KEY `uq_leave_balances_user_type_year` (`user_id`,`leave_type_id`,`year`);
 
 --
 -- Indexes for table `leave_requests`
@@ -637,7 +632,11 @@ ALTER TABLE `leave_requests`
   ADD PRIMARY KEY (`id`),
   ADD KEY `user_id` (`user_id`),
   ADD KEY `leave_type_id` (`leave_type_id`),
-  ADD KEY `approved_by` (`approved_by`);
+  ADD KEY `approved_by` (`approved_by`),
+  ADD KEY `idx_leave_requests_user_created` (`user_id`,`created_at`),
+  ADD KEY `idx_leave_requests_user_status_start` (`user_id`,`status`,`start_date`),
+  ADD KEY `idx_leave_requests_status_start_end` (`status`,`start_date`,`end_date`),
+  ADD KEY `idx_leave_requests_assignee` (`current_assignee_id`);
 
 --
 -- Indexes for table `leave_request_attachments`
@@ -666,7 +665,12 @@ ALTER TABLE `ot_approvals`
 ALTER TABLE `ot_requests`
   ADD PRIMARY KEY (`id`),
   ADD KEY `user_id` (`user_id`),
-  ADD KEY `approved_by` (`approved_by`);
+  ADD KEY `approved_by` (`approved_by`),
+  ADD KEY `idx_ot_requests_user_created` (`user_id`,`created_at`),
+  ADD KEY `idx_ot_requests_user_status_date` (`user_id`,`status`,`ot_date`),
+  ADD KEY `idx_ot_requests_user_date_time` (`user_id`,`ot_date`,`start_time`,`end_time`),
+  ADD KEY `idx_ot_requests_status_date` (`status`,`ot_date`),
+  ADD KEY `idx_ot_requests_assignee` (`current_assignee_id`);
 
 --
 -- Indexes for table `users`
@@ -674,7 +678,10 @@ ALTER TABLE `ot_requests`
 ALTER TABLE `users`
   ADD PRIMARY KEY (`id`),
   ADD KEY `fk_user_supervisor` (`supervisor_id`),
-  ADD KEY `idx_users_is_active` (`is_active`);
+  ADD KEY `idx_users_is_active` (`is_active`),
+  ADD KEY `idx_users_department_active_role` (`department`,`is_active`,`role`),
+  ADD KEY `idx_users_role_department_active` (`role`,`department`,`is_active`),
+  ADD KEY `idx_users_employee_active` (`employee_code`,`is_active`);
 
 --
 -- Indexes for table `user_leave_pool`

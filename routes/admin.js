@@ -9,6 +9,12 @@ import { calculateLeaveHours, leaveHoursToDays } from "../services/leaveTime.js"
 const router = Router();
 router.use(authenticate, requireAdmin);
 
+function yearBounds(year) {
+  const numericYear = Number(year);
+  if (!Number.isInteger(numericYear) || numericYear < 1000 || numericYear > 9999) return null;
+  return [`${numericYear}-01-01`, `${numericYear + 1}-01-01`];
+}
+
 // ── helper ────────────────────────────────────────────────────
 function mapRow(r) {
   const isHour = !!r.start_time;
@@ -199,7 +205,12 @@ router.get("/leave-requests", async (req, res, next) => {
 
     if (status) { sql += " AND lr.status = ?"; params.push(status); }
     if (user_id) { sql += " AND lr.user_id = ?"; params.push(user_id); }
-    if (year) { sql += " AND YEAR(lr.start_date) = ?"; params.push(year); }
+    if (year) {
+      const range = yearBounds(year);
+      if (!range) return res.status(400).json({ message: "year ไม่ถูกต้อง" });
+      sql += " AND lr.start_date >= ? AND lr.start_date < ?";
+      params.push(...range);
+    }
     sql += " ORDER BY lr.created_at DESC";
 
     const [rows] = await pool.query(sql, params);
@@ -544,12 +555,16 @@ router.get("/leave-pool/:user_id", async (req, res, next) => {
       [userId, year]
     );
 
+    const range = yearBounds(year);
+    if (!range) return res.status(400).json({ message: "year ไม่ถูกต้อง" });
+
     const [approvedRows] = await pool.query(
       `SELECT lr.leave_type_id, lt.name, lr.start_time, lr.end_time, lr.total_days
        FROM leave_requests lr
        JOIN leave_types lt ON lt.id = lr.leave_type_id
-       WHERE lr.user_id = ? AND lr.status = 'approved' AND YEAR(lr.start_date) = ?`,
-      [userId, year]
+       WHERE lr.user_id = ? AND lr.status = 'approved'
+         AND lr.start_date >= ? AND lr.start_date < ?`,
+      [userId, ...range]
     );
     const usedByType = approvedRows.reduce((acc, row) => {
       const key = balanceKey(row.name, row.leave_type_id);
@@ -605,7 +620,7 @@ router.patch("/leave-pool/:user_id", csrfProtect, async (req, res, next) => {
     const { balances, year } = req.body; // balances: [{ leave_type_id, total_days }]
     const userId = req.params.user_id;
 
-    if (!balances || !Array.isArray(balances) || !year) {
+    if (!balances || !Array.isArray(balances) || balances.length === 0 || !year) {
       return res.status(400).json({ message: "กรุณากรอกข้อมูลให้ครบถ้วน" });
     }
 
@@ -618,21 +633,29 @@ router.patch("/leave-pool/:user_id", csrfProtect, async (req, res, next) => {
     let totalGlobalDays = 0;
     let totalGlobalUsed = 0;
 
-    for (const b of balances) {
-      const [existing] = await conn.query(
-        "SELECT used_days FROM leave_balances WHERE user_id = ? AND leave_type_id = ? AND year = ? LIMIT 1",
-        [userId, b.leave_type_id, year]
-      );
-      const used = existing[0]?.used_days ?? 0;
-      await conn.query(
-        `INSERT INTO leave_balances (user_id, leave_type_id, total_days, used_days, year)
-         VALUES (?, ?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE total_days = ?`,
-        [userId, b.leave_type_id, b.total_days, used, year, b.total_days]
-      );
-      totalGlobalDays += parseFloat(b.total_days);
-      totalGlobalUsed += parseFloat(used);
-    }
+    const leaveTypeIds = balances.map((b) => Number(b.leave_type_id));
+    const [existingRows] = await conn.query(
+      `SELECT leave_type_id, used_days
+       FROM leave_balances
+       WHERE user_id = ? AND year = ? AND leave_type_id IN (?)`,
+      [userId, year, leaveTypeIds]
+    );
+    const usedByType = new Map(existingRows.map((row) => [Number(row.leave_type_id), Number(row.used_days ?? 0)]));
+    const balanceValues = balances.map((b) => {
+      const leaveTypeId = Number(b.leave_type_id);
+      const totalDays = Number(b.total_days);
+      const used = usedByType.get(leaveTypeId) ?? 0;
+      totalGlobalDays += totalDays;
+      totalGlobalUsed += used;
+      return [userId, leaveTypeId, totalDays, used, year];
+    });
+
+    await conn.query(
+      `INSERT INTO leave_balances (user_id, leave_type_id, total_days, used_days, year)
+       VALUES ?
+       ON DUPLICATE KEY UPDATE total_days = VALUES(total_days)`,
+      [balanceValues]
+    );
 
     // อัปเดต user_leave_pool ให้ตรงกัน (Optional: ถ้าอยากให้ pool รวมสะท้อนยอดรวมทั้งหมด)
     await conn.query(
@@ -724,7 +747,12 @@ router.get("/ot-requests", async (req, res, next) => {
 
     if (status) { sql += " AND ot.status = ?"; params.push(status); }
     if (user_id) { sql += " AND ot.user_id = ?"; params.push(user_id); }
-    if (year) { sql += " AND YEAR(ot.ot_date) = ?"; params.push(year); }
+    if (year) {
+      const range = yearBounds(year);
+      if (!range) return res.status(400).json({ message: "year ไม่ถูกต้อง" });
+      sql += " AND ot.ot_date >= ? AND ot.ot_date < ?";
+      params.push(...range);
+    }
     sql += " ORDER BY ot.created_at DESC";
 
     const [rows] = await pool.query(sql, params);
@@ -908,6 +936,7 @@ router.get("/reports/dashboard-stats", async (req, res, next) => {
     }
 
     const currentYear = new Date().getFullYear();
+    const currentYearRange = yearBounds(currentYear);
 
     const [[{ total_users }]] = await pool.query("SELECT COUNT(*) AS total_users FROM users WHERE is_active = 1");
     const [[{ pending_leaves }]] = await pool.query(
@@ -925,8 +954,8 @@ router.get("/reports/dashboard-stats", async (req, res, next) => {
     const [approvedLeaveRows] = await pool.query(
       `SELECT start_time, end_time, total_days
        FROM leave_requests
-       WHERE status = 'approved' AND YEAR(start_date) = ?`,
-      [currentYear]
+       WHERE status = 'approved' AND start_date >= ? AND start_date < ?`,
+      currentYearRange
     );
     const total_approved_leave_days = Number(
       approvedLeaveRows.reduce((sum, row) => sum + getLeaveDaysFromRow(row), 0).toFixed(2)
@@ -936,20 +965,20 @@ router.get("/reports/dashboard-stats", async (req, res, next) => {
       `SELECT u.department AS name, COUNT(*) AS value
        FROM leave_requests lr
        JOIN users u ON lr.user_id = u.id
-       WHERE YEAR(lr.start_date) = ?
+       WHERE lr.start_date >= ? AND lr.start_date < ?
        GROUP BY u.department
        ORDER BY value DESC`,
-      [currentYear]
+      currentYearRange
     );
 
     const monthNames = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
     const [monthRows] = await pool.query(
       `SELECT MONTH(start_date) AS m, COUNT(*) AS cnt
        FROM leave_requests
-       WHERE YEAR(start_date) = ?
+       WHERE start_date >= ? AND start_date < ?
        GROUP BY MONTH(start_date)
        ORDER BY m`,
-      [currentYear]
+      currentYearRange
     );
     const monthMap = {};
     monthRows.forEach(r => { monthMap[r.m] = r.cnt; });
@@ -963,9 +992,9 @@ router.get("/reports/dashboard-stats", async (req, res, next) => {
        FROM leave_requests lr
        JOIN users u ON lr.user_id = u.id
        JOIN leave_types lt ON lr.leave_type_id = lt.id
-       WHERE lr.status = 'approved' AND YEAR(lr.start_date) = ?
+       WHERE lr.status = 'approved' AND lr.start_date >= ? AND lr.start_date < ?
        ORDER BY u.department ASC`,
-      [currentYear]
+      currentYearRange
     );
     const leaveTypeStatsMap = leaveTypeRowsRaw.reduce((acc, row) => {
       const key = `${row.department}::${row.leave_type}`;
@@ -994,15 +1023,16 @@ router.get("/reports/leave-summary", async (req, res, next) => {
       return res.status(403).json({ message: "ไม่มีสิทธิ์เข้าถึงรายงาน" });
     }
 
+    const currentYearRange = yearBounds(new Date().getFullYear());
     const sql = `
       SELECT u.department, lt.name AS leave_type, lr.start_time, lr.end_time, lr.total_days
       FROM leave_requests lr
       JOIN users u ON lr.user_id = u.id
       JOIN leave_types lt ON lr.leave_type_id = lt.id
-      WHERE lr.status = 'approved' AND YEAR(lr.start_date) = YEAR(CURDATE())
+      WHERE lr.status = 'approved' AND lr.start_date >= ? AND lr.start_date < ?
       ORDER BY u.department ASC
     `;
-    const [rows] = await pool.query(sql);
+    const [rows] = await pool.query(sql, currentYearRange);
     const summaryMap = rows.reduce((acc, row) => {
       const key = `${row.department}::${row.leave_type}`;
       if (!acc[key]) acc[key] = { department: row.department, leave_type: row.leave_type, total_leave_days: 0 };

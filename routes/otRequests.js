@@ -6,6 +6,12 @@ import { logAudit } from "../middleware/audit.js";
 
 const router = Router();
 
+function yearBounds(year) {
+  const numericYear = Number(year);
+  if (!Number.isInteger(numericYear) || numericYear < 1000 || numericYear > 9999) return null;
+  return [`${numericYear}-01-01`, `${numericYear + 1}-01-01`];
+}
+
 // ── helper ────────────────────────────────────────────────────
 function mapRow(r) {
   let total_hours = null;
@@ -40,6 +46,8 @@ router.get("/my", authenticate, async (req, res, next) => {
 router.get("/report/monthly", authenticate, async (req, res, next) => {
   try {
     const year = req.query.year ?? new Date().getFullYear();
+    const range = yearBounds(year);
+    if (!range) return res.status(400).json({ message: "year ไม่ถูกต้อง" });
     const [rows] = await pool.query(
       `SELECT
          MONTH(ot_date)    AS month,
@@ -47,11 +55,12 @@ router.get("/report/monthly", authenticate, async (req, res, next) => {
          SUM(total_hours)  AS total_hours
        FROM ot_requests
        WHERE user_id = ?
-         AND YEAR(ot_date) = ?
+         AND ot_date >= ?
+         AND ot_date < ?
          AND status = 'approved'
        GROUP BY MONTH(ot_date)
        ORDER BY month ASC`,
-      [req.user.id, year]
+      [req.user.id, ...range]
     );
     const months = Array.from({ length: 12 }, (_, i) => ({
       month: i + 1,
