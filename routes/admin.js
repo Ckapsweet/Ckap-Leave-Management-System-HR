@@ -9,6 +9,17 @@ import { calculateLeaveHours, leaveHoursToDays } from "../services/leaveTime.js"
 const router = Router();
 router.use(authenticate, requireAdmin);
 
+const latestLeaveApprovalJoin = `
+      LEFT JOIN (
+        SELECT la1.*
+        FROM leave_approvals la1
+        JOIN (
+          SELECT leave_request_id, MAX(id) AS id
+          FROM leave_approvals
+          GROUP BY leave_request_id
+        ) latest_la ON latest_la.id = la1.id
+      ) la ON la.leave_request_id = lr.id`;
+
 function yearBounds(year) {
   const numericYear = Number(year);
   if (!Number.isInteger(numericYear) || numericYear < 1000 || numericYear > 9999) return null;
@@ -189,7 +200,7 @@ router.get("/leave-requests", async (req, res, next) => {
       JOIN users u ON lr.user_id = u.id
       JOIN leave_types lt ON lr.leave_type_id = lt.id
       LEFT JOIN users approver ON lr.approved_by = approver.id
-      LEFT JOIN leave_approvals la ON la.leave_request_id = lr.id
+      ${latestLeaveApprovalJoin}
       WHERE 1=1`;
     const params = [];
 
