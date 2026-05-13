@@ -11,6 +11,12 @@ import { calculateLeaveHours, leaveHoursToDays } from "../services/leaveTime.js"
 
 const router = Router();
 
+function yearBounds(year) {
+  const numericYear = Number(year);
+  if (!Number.isInteger(numericYear) || numericYear < 1000 || numericYear > 9999) return null;
+  return [`${numericYear}-01-01`, `${numericYear + 1}-01-01`];
+}
+
 // ── helper ────────────────────────────────────────────────────
 function mapRow(r) {
   const isHour = !!r.start_time;
@@ -72,6 +78,29 @@ async function canAccessAttachment(req, leaveRequest) {
 
 function hasEmail(user) {
   return Boolean(user?.email || user?.email_2);
+}
+
+function queueLeaveRequestNotifications({ leaveRequest, requester, status, assignee, isAutoApprove }) {
+  setImmediate(() => {
+    void (async () => {
+      await notifyLeaveRequestSubmitted({
+        leaveRequest,
+        requester,
+        status,
+        assignee,
+      });
+
+      if (!isAutoApprove) {
+        await notifyLeaveRequestCreated({
+          leaveRequest,
+          requester,
+          assignee,
+        });
+      }
+    })().catch((err) => {
+      console.error("[mail] leave request notification failed:", err.message);
+    });
+  });
 }
 
 async function findInitialAssignee(conn, userId) {
@@ -209,6 +238,8 @@ router.get("/my", authenticate, async (req, res, next) => {
 router.get("/report/monthly", authenticate, async (req, res, next) => {
   try {
     const year = req.query.year ?? new Date().getFullYear();
+    const range = yearBounds(year);
+    if (!range) return res.status(400).json({ message: "year ไม่ถูกต้อง" });
     const [rows] = await pool.query(
       `SELECT
          MONTH(start_date) AS month,
@@ -219,11 +250,12 @@ router.get("/report/monthly", authenticate, async (req, res, next) => {
        FROM leave_requests lr
        JOIN leave_types lt ON lr.leave_type_id = lt.id
        WHERE lr.user_id = ?
-         AND YEAR(lr.start_date) = ?
+         AND lr.start_date >= ?
+         AND lr.start_date < ?
          AND lr.status = 'approved'
        GROUP BY MONTH(start_date), lt.id
        ORDER BY month ASC`,
-      [req.user.id, year]
+      [req.user.id, ...range]
     );
     const months = Array.from({ length: 12 }, (_, i) => ({
       month: i + 1,
@@ -493,22 +525,15 @@ router.post("/", authenticate, csrfProtect, uploadLeaveAttachments.array("attach
       },
     });
 
-    await notifyLeaveRequestSubmitted({
+    res.status(201).json(created);
+
+    queueLeaveRequestNotifications({
       leaveRequest: rows[0],
       requester,
       status: finalStatus,
       assignee,
+      isAutoApprove,
     });
-
-    if (!isAutoApprove) {
-      await notifyLeaveRequestCreated({
-        leaveRequest: rows[0],
-        requester,
-        assignee,
-      });
-    }
-
-    res.status(201).json(created);
   } catch (err) {
     console.error("[POST /leave-requests] error:", err.message, err.sqlMessage ?? "");
     await conn.rollback();
