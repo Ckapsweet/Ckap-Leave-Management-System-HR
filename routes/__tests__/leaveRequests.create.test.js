@@ -210,6 +210,40 @@ function makePendingRequest(overrides = {}) {
   };
 }
 
+function makeLeaveListRow(overrides = {}) {
+  return {
+    id: 501,
+    user_id: mockUser.id,
+    leave_type_id: 1,
+    start_date: "2026-05-13",
+    end_date: "2026-05-13",
+    start_time: "09:00",
+    end_time: "11:30",
+    total_days: 0.3,
+    request_type: "leave",
+    reason: "Hourly leave",
+    status: "approved",
+    approved_by: 9,
+    approved_at: "2026-05-13T03:00:00.000Z",
+    current_assignee_id: null,
+    created_at: "2026-05-13T01:00:00.000Z",
+    leave_type_name: "Annual Leave",
+    leave_type_description: "Annual leave",
+    leave_type_max_days: 10,
+    approver_name: "Manager",
+    comment: "Approved",
+    user_full_name: mockUser.full_name,
+    employee_code: mockUser.employee_code,
+    department: mockUser.department,
+    user_role: mockUser.role,
+    supervisor_id: mockUser.supervisor_id,
+    email: mockUser.email,
+    email_2: mockUser.email_2,
+    phone: null,
+    ...overrides,
+  };
+}
+
 function mockAdminLeaveActionQueries(row = makePendingRequest()) {
   conn.query.mockImplementation(async (sql, params) => {
     if (sql.includes("FROM leave_requests lr") && sql.includes("JOIN users u")) {
@@ -291,6 +325,56 @@ beforeEach(() => {
   notifyLeaveRequestForwarded.mockResolvedValue();
   notifyLeaveRequestResolved.mockResolvedValue();
   mockCreateLeaveQueries();
+});
+
+describe("GET leave request lists", () => {
+  it("uses only the latest approval row for my leave list to avoid duplicate requests", async () => {
+    pool.query.mockImplementation(async (sql) => {
+      if (sql.includes("FROM leave_request_attachments")) return [[]];
+      return [[makeLeaveListRow()]];
+    });
+
+    const res = await request(app)
+      .get("/api/leave-requests/my")
+      .expect(200);
+
+    expect(res.body).toHaveLength(1);
+    expect(res.body[0]).toMatchObject({
+      id: 501,
+      leave_unit: "hour",
+      total_hours: 2.5,
+      comment: "Approved",
+    });
+
+    const sql = pool.query.mock.calls[0][0];
+    expect(sql).toContain("MAX(id) AS id");
+    expect(sql).not.toContain("LEFT JOIN leave_approvals la ON la.leave_request_id = lr.id");
+  });
+
+  it("uses only the latest approval row for admin leave list to avoid duplicate requests", async () => {
+    mockUser.role = "manager";
+    pool.query.mockImplementation(async (sql) => {
+      if (sql.includes("FROM leave_request_attachments")) return [[]];
+      return [[makeLeaveListRow({ user_id: 22 })]];
+    });
+
+    const res = await request(adminApp)
+      .get("/api/admin/leave-requests")
+      .expect(200);
+
+    expect(res.body).toHaveLength(1);
+    expect(res.body[0]).toMatchObject({
+      id: 501,
+      leave_unit: "hour",
+      total_hours: 2.5,
+      comment: "Approved",
+      user: expect.objectContaining({ id: 22 }),
+    });
+
+    const sql = pool.query.mock.calls[0][0];
+    expect(sql).toContain("MAX(id) AS id");
+    expect(sql).not.toContain("LEFT JOIN leave_approvals la ON la.leave_request_id = lr.id");
+  });
 });
 
 describe("POST /api/leave-requests - full-day leave", () => {

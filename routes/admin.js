@@ -9,6 +9,17 @@ import { calculateLeaveHours, leaveHoursToDays } from "../services/leaveTime.js"
 const router = Router();
 router.use(authenticate, requireAdmin);
 
+const latestLeaveApprovalJoin = `
+      LEFT JOIN (
+        SELECT la1.*
+        FROM leave_approvals la1
+        JOIN (
+          SELECT leave_request_id, MAX(id) AS id
+          FROM leave_approvals
+          GROUP BY leave_request_id
+        ) latest_la ON latest_la.id = la1.id
+      ) la ON la.leave_request_id = lr.id`;
+
 function yearBounds(year) {
   const numericYear = Number(year);
   if (!Number.isInteger(numericYear) || numericYear < 1000 || numericYear > 9999) return null;
@@ -189,7 +200,7 @@ router.get("/leave-requests", async (req, res, next) => {
       JOIN users u ON lr.user_id = u.id
       JOIN leave_types lt ON lr.leave_type_id = lt.id
       LEFT JOIN users approver ON lr.approved_by = approver.id
-      LEFT JOIN leave_approvals la ON la.leave_request_id = lr.id
+      ${latestLeaveApprovalJoin}
       WHERE 1=1`;
     const params = [];
 
@@ -533,20 +544,21 @@ router.get("/leave-pool/:user_id", async (req, res, next) => {
   try {
     const year = req.query.year ?? new Date().getFullYear();
     const userId = req.params.user_id;
+    const range = yearBounds(year);
+    if (!range) return res.status(400).json({ message: "year ไม่ถูกต้อง" });
 
     const [uRows] = await pool.query("SELECT department FROM users WHERE id = ? AND is_active = 1 LIMIT 1", [userId]);
     if (!uRows[0]) return res.status(404).json({ message: "ไม่พบผู้ใช้งาน" });
     if (!assertSameDept(req, res, uRows[0].department)) return;
 
     // 1. ดึง pool รวม
-    const [pRows] = await pool.query(
+    const poolRowsPromise = pool.query(
       "SELECT * FROM user_leave_pool WHERE user_id = ? AND year = ? LIMIT 1",
       [userId, year]
     );
-    const poolData = pRows[0] || { id: null, user_id: Number(userId), total_days: 0, used_days: 0, year: Number(year) };
     
     // 2. ดึงแยกตามประเภท
-    const [bRows] = await pool.query(
+    const balanceRowsPromise = pool.query(
       `SELECT lt.id AS leave_type_id, lt.name, lt.max_days AS default_max,
               lb.total_days, lb.used_days
        FROM leave_types lt
@@ -555,10 +567,7 @@ router.get("/leave-pool/:user_id", async (req, res, next) => {
       [userId, year]
     );
 
-    const range = yearBounds(year);
-    if (!range) return res.status(400).json({ message: "year ไม่ถูกต้อง" });
-
-    const [approvedRows] = await pool.query(
+    const approvedRowsPromise = pool.query(
       `SELECT lr.leave_type_id, lt.name, lr.start_time, lr.end_time, lr.total_days
        FROM leave_requests lr
        JOIN leave_types lt ON lt.id = lr.leave_type_id
@@ -566,6 +575,13 @@ router.get("/leave-pool/:user_id", async (req, res, next) => {
          AND lr.start_date >= ? AND lr.start_date < ?`,
       [userId, ...range]
     );
+    const [[pRows], [bRows], [approvedRows]] = await Promise.all([
+      poolRowsPromise,
+      balanceRowsPromise,
+      approvedRowsPromise,
+    ]);
+    const poolData = pRows[0] || { id: null, user_id: Number(userId), total_days: 0, used_days: 0, year: Number(year) };
+
     const usedByType = approvedRows.reduce((acc, row) => {
       const key = balanceKey(row.name, row.leave_type_id);
       acc[key] = (acc[key] ?? 0) + getLeaveDaysFromRow(row);
@@ -938,30 +954,30 @@ router.get("/reports/dashboard-stats", async (req, res, next) => {
     const currentYear = new Date().getFullYear();
     const currentYearRange = yearBounds(currentYear);
 
-    const [[{ total_users }]] = await pool.query("SELECT COUNT(*) AS total_users FROM users WHERE is_active = 1");
-    const [[{ pending_leaves }]] = await pool.query(
-      "SELECT COUNT(*) AS pending_leaves FROM leave_requests WHERE status = 'pending'"
-    );
-
-    let pending_ots = 0;
-    try {
-      const [[otRow]] = await pool.query(
+    const [
+      [[{ total_users }]],
+      [[{ pending_leaves }]],
+      [[otRow]],
+      [approvedLeaveRows],
+    ] = await Promise.all([
+      pool.query("SELECT COUNT(*) AS total_users FROM users WHERE is_active = 1"),
+      pool.query("SELECT COUNT(*) AS pending_leaves FROM leave_requests WHERE status = 'pending'"),
+      pool.query(
         "SELECT COUNT(*) AS pending_ots FROM ot_requests WHERE status = 'pending'"
-      );
-      pending_ots = otRow.pending_ots;
-    } catch { /* table might not exist */ }
-
-    const [approvedLeaveRows] = await pool.query(
-      `SELECT start_time, end_time, total_days
-       FROM leave_requests
-       WHERE status = 'approved' AND start_date >= ? AND start_date < ?`,
-      currentYearRange
-    );
+      ).catch(() => [[{ pending_ots: 0 }]]),
+      pool.query(
+        `SELECT start_time, end_time, total_days
+         FROM leave_requests
+         WHERE status = 'approved' AND start_date >= ? AND start_date < ?`,
+        currentYearRange
+      ),
+    ]);
+    const pending_ots = otRow.pending_ots;
     const total_approved_leave_days = Number(
       approvedLeaveRows.reduce((sum, row) => sum + getLeaveDaysFromRow(row), 0).toFixed(2)
     );
 
-    const [deptRows] = await pool.query(
+    const deptRowsPromise = pool.query(
       `SELECT u.department AS name, COUNT(*) AS value
        FROM leave_requests lr
        JOIN users u ON lr.user_id = u.id
@@ -972,7 +988,7 @@ router.get("/reports/dashboard-stats", async (req, res, next) => {
     );
 
     const monthNames = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
-    const [monthRows] = await pool.query(
+    const monthRowsPromise = pool.query(
       `SELECT MONTH(start_date) AS m, COUNT(*) AS cnt
        FROM leave_requests
        WHERE start_date >= ? AND start_date < ?
@@ -980,14 +996,7 @@ router.get("/reports/dashboard-stats", async (req, res, next) => {
        ORDER BY m`,
       currentYearRange
     );
-    const monthMap = {};
-    monthRows.forEach(r => { monthMap[r.m] = r.cnt; });
-    const monthlyStats = monthNames.map((name, i) => ({
-      name,
-      "จำนวนครั้งที่ลา": monthMap[i + 1] || 0,
-    }));
-
-    const [leaveTypeRowsRaw] = await pool.query(
+    const leaveTypeRowsPromise = pool.query(
       `SELECT u.department, lt.name AS leave_type, lr.start_time, lr.end_time, lr.total_days
        FROM leave_requests lr
        JOIN users u ON lr.user_id = u.id
@@ -996,6 +1005,15 @@ router.get("/reports/dashboard-stats", async (req, res, next) => {
        ORDER BY u.department ASC`,
       currentYearRange
     );
+    const [[deptRows], [monthRows]] = await Promise.all([deptRowsPromise, monthRowsPromise]);
+    const monthMap = {};
+    monthRows.forEach(r => { monthMap[r.m] = r.cnt; });
+    const monthlyStats = monthNames.map((name, i) => ({
+      name,
+      "จำนวนครั้งที่ลา": monthMap[i + 1] || 0,
+    }));
+
+    const [leaveTypeRowsRaw] = await leaveTypeRowsPromise;
     const leaveTypeStatsMap = leaveTypeRowsRaw.reduce((acc, row) => {
       const key = `${row.department}::${row.leave_type}`;
       if (!acc[key]) acc[key] = { department: row.department, leave_type: row.leave_type, total_leave_days: 0 };
