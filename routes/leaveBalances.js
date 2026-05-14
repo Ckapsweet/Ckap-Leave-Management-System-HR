@@ -57,14 +57,15 @@ async function getBalancesByType(userId, year) {
 router.get("/", authenticate, async (req, res, next) => {
   try {
     const year = Number(req.query.year || new Date().getFullYear());
-    const balances = await getBalancesByType(req.user.id, year);
-
-    const [rows] = await pool.query(
-      `SELECT * FROM user_leave_pool
-       WHERE user_id = ? AND year = ?
-       LIMIT 1`,
-      [req.user.id, year]
-    );
+    const [balances, [rows]] = await Promise.all([
+      getBalancesByType(req.user.id, year),
+      pool.query(
+        `SELECT * FROM user_leave_pool
+         WHERE user_id = ? AND year = ?
+         LIMIT 1`,
+        [req.user.id, year]
+      ),
+    ]);
 
     if (!rows[0]) {
       const totalDays = balances.reduce((sum, balance) => sum + balance.total_days, 0);

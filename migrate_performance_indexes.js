@@ -59,86 +59,105 @@ async function migrate() {
     await dedupeLeaveBalances(conn);
 
     await addIndex(
-    conn,
-    "leave_balances",
-    "uq_leave_balances_user_type_year",
-    "ALTER TABLE leave_balances ADD UNIQUE KEY uq_leave_balances_user_type_year (user_id, leave_type_id, year)"
-  );
+      conn,
+      "leave_balances",
+      "uq_leave_balances_user_type_year",
+      "ALTER TABLE leave_balances ADD UNIQUE KEY uq_leave_balances_user_type_year (user_id, leave_type_id, year)"
+    );
 
     await addIndex(
-    conn,
-    "leave_requests",
-    "idx_leave_requests_user_created",
-    "CREATE INDEX idx_leave_requests_user_created ON leave_requests (user_id, created_at)"
-  );
+      conn,
+      "leave_approvals",
+      "idx_leave_approvals_request_id",
+      "CREATE INDEX idx_leave_approvals_request_id ON leave_approvals (leave_request_id, id)"
+    );
     await addIndex(
-    conn,
-    "leave_requests",
-    "idx_leave_requests_user_status_start",
-    "CREATE INDEX idx_leave_requests_user_status_start ON leave_requests (user_id, status, start_date)"
-  );
-    await addIndex(
-    conn,
-    "leave_requests",
-    "idx_leave_requests_status_start_end",
-    "CREATE INDEX idx_leave_requests_status_start_end ON leave_requests (status, start_date, end_date)"
-  );
-    await addIndex(
-    conn,
-    "leave_requests",
-    "idx_leave_requests_assignee",
-    "CREATE INDEX idx_leave_requests_assignee ON leave_requests (current_assignee_id)"
-  );
+      conn,
+      "leave_request_attachments",
+      "idx_leave_request_attachments_request_id",
+      "CREATE INDEX idx_leave_request_attachments_request_id ON leave_request_attachments (leave_request_id, id)"
+    );
 
     await addIndex(
-    conn,
-    "ot_requests",
-    "idx_ot_requests_user_created",
-    "CREATE INDEX idx_ot_requests_user_created ON ot_requests (user_id, created_at)"
-  );
+      conn,
+      "leave_requests",
+      "idx_leave_requests_user_created",
+      "CREATE INDEX idx_leave_requests_user_created ON leave_requests (user_id, created_at)"
+    );
     await addIndex(
-    conn,
-    "ot_requests",
-    "idx_ot_requests_user_status_date",
-    "CREATE INDEX idx_ot_requests_user_status_date ON ot_requests (user_id, status, ot_date)"
-  );
+      conn,
+      "leave_requests",
+      "idx_leave_requests_user_status_start",
+      "CREATE INDEX idx_leave_requests_user_status_start ON leave_requests (user_id, status, start_date)"
+    );
     await addIndex(
-    conn,
-    "ot_requests",
-    "idx_ot_requests_user_date_time",
-    "CREATE INDEX idx_ot_requests_user_date_time ON ot_requests (user_id, ot_date, start_time, end_time)"
-  );
+      conn,
+      "leave_requests",
+      "idx_leave_requests_status_start_end",
+      "CREATE INDEX idx_leave_requests_status_start_end ON leave_requests (status, start_date, end_date)"
+    );
     await addIndex(
-    conn,
-    "ot_requests",
-    "idx_ot_requests_status_date",
-    "CREATE INDEX idx_ot_requests_status_date ON ot_requests (status, ot_date)"
-  );
-    await addIndex(
-    conn,
-    "ot_requests",
-    "idx_ot_requests_assignee",
-    "CREATE INDEX idx_ot_requests_assignee ON ot_requests (current_assignee_id)"
-  );
+      conn,
+      "leave_requests",
+      "idx_leave_requests_assignee",
+      "CREATE INDEX idx_leave_requests_assignee ON leave_requests (current_assignee_id)"
+    );
 
     await addIndex(
-    conn,
-    "users",
-    "idx_users_department_active_role",
-    "CREATE INDEX idx_users_department_active_role ON users (department, is_active, role)"
-  );
+      conn,
+      "ot_requests",
+      "idx_ot_requests_user_created",
+      "CREATE INDEX idx_ot_requests_user_created ON ot_requests (user_id, created_at)"
+    );
     await addIndex(
-    conn,
-    "users",
-    "idx_users_role_department_active",
-    "CREATE INDEX idx_users_role_department_active ON users (role, department, is_active)"
-  );
+      conn,
+      "ot_requests",
+      "idx_ot_requests_user_status_date",
+      "CREATE INDEX idx_ot_requests_user_status_date ON ot_requests (user_id, status, ot_date)"
+    );
     await addIndex(
-    conn,
-    "users",
-    "idx_users_employee_active",
-    "CREATE INDEX idx_users_employee_active ON users (employee_code, is_active)"
-  );
+      conn,
+      "ot_requests",
+      "idx_ot_requests_user_date_time",
+      "CREATE INDEX idx_ot_requests_user_date_time ON ot_requests (user_id, ot_date, start_time, end_time)"
+    );
+    await addIndex(
+      conn,
+      "ot_requests",
+      "idx_ot_requests_status_date",
+      "CREATE INDEX idx_ot_requests_status_date ON ot_requests (status, ot_date)"
+    );
+    await addIndex(
+      conn,
+      "ot_requests",
+      "idx_ot_requests_assignee",
+      "CREATE INDEX idx_ot_requests_assignee ON ot_requests (current_assignee_id)"
+    );
+    await addIndex(
+      conn,
+      "ot_approvals",
+      "idx_ot_approvals_request_id",
+      "CREATE INDEX idx_ot_approvals_request_id ON ot_approvals (ot_request_id, id)"
+    );
+
+    await addIndex(
+      conn,
+      "users",
+      "idx_users_department_active_role",
+      "CREATE INDEX idx_users_department_active_role ON users (department, is_active, role)"
+    );
+    await addIndex(
+      conn,
+      "users",
+      "idx_users_role_department_active",
+      "CREATE INDEX idx_users_role_department_active ON users (role, department, is_active)"
+    );
+    await addIndex(
+      conn,
+      "users",
+      "idx_users_employee_active",
+      "CREATE INDEX idx_users_employee_active ON users (employee_code, is_active)"
+    );
 
     conn.release();
     await pool.end();
