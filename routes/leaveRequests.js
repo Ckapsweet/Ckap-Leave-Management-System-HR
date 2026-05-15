@@ -8,6 +8,7 @@ import { logAudit } from "../middleware/audit.js";
 import { leaveAttachmentDir, normalizeOriginalName, uploadLeaveAttachments } from "../middleware/upload.js";
 import { notifyLeaveRequestCreated, notifyLeaveRequestSubmitted } from "../services/mailService.js";
 import { calculateLeaveHours, leaveHoursToDays } from "../services/leaveTime.js";
+import { mapLeaveRequestRow } from "../services/leaveRequestHelpers.js";
 
 const router = Router();
 
@@ -30,22 +31,7 @@ function yearBounds(year) {
 
 // ── helper ────────────────────────────────────────────────────
 function mapRow(r) {
-  const isHour = !!r.start_time;
-  let total_hours = null;
-  if (isHour && r.start_time && r.end_time) {
-    total_hours = calculateLeaveHours(r.start_time, r.end_time);
-  }
-  return {
-    ...r,
-    leave_unit: isHour ? "hour" : "day",
-    total_hours,
-    leave_type: {
-      id: r.leave_type_id,
-      name: r.leave_type_name,
-      description: r.leave_type_description,
-      max_days: r.leave_type_max_days,
-    },
-  };
+  return mapLeaveRequestRow(r);
 }
 
 function attachmentUrl(id) {

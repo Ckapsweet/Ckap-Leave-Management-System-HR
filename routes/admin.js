@@ -5,6 +5,13 @@ import { authenticate, requireAdmin, csrfProtect } from "../middleware/auth.js";
 import { logAudit } from "../middleware/audit.js";
 import { notifyLeaveRequestForwarded, notifyLeaveRequestResolved } from "../services/mailService.js";
 import { calculateLeaveHours, leaveHoursToDays } from "../services/leaveTime.js";
+import {
+  approveWorkflowRequest,
+  canActOnWorkflow,
+  canManageDepartment,
+  rejectWorkflowRequest,
+} from "../services/approvalWorkflow.js";
+import { mapLeaveRequestRow } from "../services/leaveRequestHelpers.js";
 
 const router = Router();
 router.use(authenticate, requireAdmin);
@@ -28,32 +35,7 @@ function yearBounds(year) {
 
 // ── helper ────────────────────────────────────────────────────
 function mapRow(r) {
-  const isHour = !!r.start_time;
-  let total_hours = null;
-  if (isHour && r.start_time && r.end_time) {
-    total_hours = calculateLeaveHours(r.start_time, r.end_time);
-  }
-  return {
-    ...r,
-    leave_unit: isHour ? "hour" : "day",
-    total_hours,
-    user: {
-      id: r.user_id,
-      full_name: r.user_full_name,
-      employee_code: r.employee_code,
-      department: r.department,
-      role: r.user_role,
-      supervisor_id: r.supervisor_id,
-      email: r.email,
-      email_2: r.email_2,
-      phone: r.phone,
-    },
-    leave_type: {
-      id: r.leave_type_id,
-      name: r.leave_type_name,
-      max_days: r.leave_type_max_days,
-    },
-  };
+  return mapLeaveRequestRow(r, { includeUser: true });
 }
 
 function getLeaveDaysFromRow(row) {
@@ -99,94 +81,18 @@ async function attachLeaveFiles(rows) {
   });
   return rows.map((row) => ({ ...row, attachments: byRequest.get(row.id) ?? [] }));
 }
-
-function assertSameDept(req, res, dept) {
-  if (req.user.role === "admin" || req.user.role === "manager") return true;
-
-  const isDeptAdmin = req.user.role === "assistant manager";
-  if (isDeptAdmin && req.user.department !== dept) {
-    res.status(403).json({ message: "ไม่มีสิทธิ์จัดการพนักงานนอกแผนกของคุณ" });
-    return false;
-  }
-  return true;
+function assertSameDept(req, res, dept) {
+  if (canManageDepartment(req.user, dept)) return true;
+  res.status(403).json({ message: "ไม่มีสิทธิ์จัดการพนักงานนอกแผนกของคุณ" });
+  return false;
 }
 
 async function assertWorkflowRights(req, res, targetRow) {
-  if (req.user.role === "admin") return true;
-  if (targetRow.current_assignee_id !== req.user.id) {
-    res.status(403).json({ message: "ยังไม่ถึงลำดับการอนุมัติ" });
-    return false;
-  }
-  return true;
+  if (canActOnWorkflow(req.user, targetRow)) return true;
+  res.status(403).json({ message: "ยังไม่ถึงลำดับการอนุมัติ" });
+  return false;
 }
 
-// ── FIXED: getNextAssignee ────────────────────────────────────
-// เดินตาม role chain: lead → assistant manager → manager
-// ไม่ใช้แค่ supervisor_id แบบตาบอดอีกต่อไป
-async function getNextAssignee(conn, currentApproverId) {
-  // ดึง role + supervisor_id ของคนที่เพิ่ง approve
-  const [rows] = await conn.query(
-    "SELECT role, supervisor_id, department FROM users WHERE id = ? AND is_active = 1",
-    [currentApproverId]
-  );
-  const approver = rows[0];
-  if (!approver) return null;
-
-  // กำหนด role ถัดไปในสายการอนุมัติ
-  const nextRoleMap = {
-    lead: "assistant manager",
-    "assistant manager": "manager",
-  };
-  const nextRole = nextRoleMap[approver.role];
-  if (!nextRole) return null; // manager / admin = final ไม่มีคนถัดไป
-
-  // ลองหาจาก supervisor_id ก่อน (ตรงที่สุด)
-  if (approver.supervisor_id) {
-    const [supRows] = await conn.query(
-      "SELECT id, role, email, email_2 FROM users WHERE id = ? AND is_active = 1",
-      [approver.supervisor_id]
-    );
-    if (supRows[0]?.role === nextRole && hasEmail(supRows[0])) return supRows[0].id;
-    if (supRows[0]?.role === nextRole) {
-      console.warn("[mail] next assignee supervisor missing email", {
-        currentApproverId,
-        nextRole,
-        supervisorId: supRows[0].id,
-      });
-    }
-  }
-
-  // Fallback: หาคนที่มี role นั้นใน department เดียวกัน
-  const [deptRows] = await conn.query(
-    `SELECT id, email, email_2
-     FROM users
-     WHERE role = ?
-       AND department = ?
-       AND is_active = 1
-       AND (
-         (email IS NOT NULL AND TRIM(email) <> '')
-         OR (email_2 IS NOT NULL AND TRIM(email_2) <> '')
-       )
-     LIMIT 1`,
-    [nextRole, approver.department]
-  );
-  if (deptRows[0]) return deptRows[0].id;
-
-  const [anyRows] = await conn.query(
-    "SELECT id FROM users WHERE role = ? AND department = ? AND is_active = 1 LIMIT 1",
-    [nextRole, approver.department]
-  );
-  if (anyRows[0]) {
-    console.warn("[mail] next assignee selected without email", {
-      currentApproverId,
-      nextRole,
-      selectedAssigneeId: anyRows[0].id,
-    });
-  }
-  return anyRows[0]?.id ?? null;
-}
-
-// ── GET /api/admin/leave-requests ────────────────────────────
 router.get("/leave-requests", async (req, res, next) => {
   try {
     const { status, user_id, year } = req.query;
@@ -264,52 +170,35 @@ router.patch("/leave-requests/:id/approve", csrfProtect, async (req, res, next) 
     };
 
     await conn.beginTransaction();
-    const now = new Date();
+    const approval = await approveWorkflowRequest({
+      conn,
+      requestTable: "leave_requests",
+      approvalTable: "leave_approvals",
+      approvalRequestColumn: "leave_request_id",
+      requestId,
+      approver: req.user,
+      comment,
+      targetRow: rows[0],
+      onFinalApprove: async () => {
+        const year = new Date(rows[0].start_date).getFullYear();
+        const leaveTypeId = rows[0].leave_type_id;
 
-    // FIXED: lead และ assistant manager ไม่ใช่ final เสมอ
-    const isFinalApproval = ["manager", "admin"].includes(req.user.role);
+        await conn.query(
+          `UPDATE user_leave_pool SET used_days = used_days + ? WHERE user_id = ? AND year = ?`,
+          [rows[0].total_days, rows[0].user_id, year]
+        );
 
-    if (isFinalApproval) {
-      await conn.query(
-        "UPDATE leave_requests SET status = 'approved', approved_by = ?, approved_at = ?, current_assignee_id = NULL WHERE id = ?",
-        [approverId, now, requestId]
-      );
-      const year = new Date(rows[0].start_date).getFullYear();
-      const leaveTypeId = rows[0].leave_type_id;
-
-      // Update global pool
-      await conn.query(
-        `UPDATE user_leave_pool SET used_days = used_days + ? WHERE user_id = ? AND year = ?`,
-        [rows[0].total_days, rows[0].user_id, year]
-      );
-
-      // Update per-type balance
-      await conn.query(
-        `INSERT INTO leave_balances (user_id, leave_type_id, total_days, used_days, year)
-         SELECT ?, ?, max_days, ?, ? FROM leave_types WHERE id = ?
-         ON DUPLICATE KEY UPDATE used_days = used_days + ?`,
-        [rows[0].user_id, leaveTypeId, rows[0].total_days, year, leaveTypeId, rows[0].total_days]
-      );
-    } else {
-      // ส่งต่อไปยัง role ถัดไปใน chain
-      const nextAssignee = await getNextAssignee(conn, approverId);
-      await conn.query(
-        "UPDATE leave_requests SET current_assignee_id = ? WHERE id = ?",
-        [nextAssignee, requestId]
-      );
-    }
-
-    await conn.query(
-      `INSERT INTO leave_approvals (leave_request_id, approver_id, status, comment, approved_at)
-       VALUES (?, ?, 'approved', ?, ?)
-       ON DUPLICATE KEY UPDATE status = 'approved', comment = ?, approved_at = ?`,
-      [requestId, approverId, comment, now, comment, now]
-    );
-
+        await conn.query(
+          `INSERT INTO leave_balances (user_id, leave_type_id, total_days, used_days, year)
+           SELECT ?, ?, max_days, ?, ? FROM leave_types WHERE id = ?
+           ON DUPLICATE KEY UPDATE used_days = used_days + ?`,
+          [rows[0].user_id, leaveTypeId, rows[0].total_days, year, leaveTypeId, rows[0].total_days]
+        );
+      },
+    });
     await conn.commit();
 
-    const nextAssigneeForResponse = isFinalApproval ? null : await (async () => {
-      // ดึง next assignee อีกครั้งเพื่อ response (หลัง commit แล้ว)
+    const nextAssigneeForResponse = approval.finalApproval ? null : await (async () => {
       const [updated] = await pool.query(
         "SELECT current_assignee_id FROM leave_requests WHERE id = ?",
         [requestId]
@@ -323,7 +212,7 @@ router.patch("/leave-requests/:id/approve", csrfProtect, async (req, res, next) 
       targetType: "leave_request",
       targetId: Number(requestId),
       before,
-      after: { status: isFinalApproval ? "approved" : "pending", approved_by: approverId, approved_at: now, comment: comment ?? null },
+      after: { status: approval.status, approved_by: approverId, approved_at: approval.now, comment: comment ?? null },
       note: comment ?? null,
       conn,
     });
@@ -339,7 +228,7 @@ router.patch("/leave-requests/:id/approve", csrfProtect, async (req, res, next) 
       email_2: rows[0].requester_email_2,
     };
 
-    if (isFinalApproval) {
+    if (approval.finalApproval) {
       await notifyLeaveRequestResolved({
         leaveRequest: rows[0],
         requester,
@@ -361,9 +250,9 @@ router.patch("/leave-requests/:id/approve", csrfProtect, async (req, res, next) 
       });
     }
 
-    res.json({
-      message: isFinalApproval ? "อนุมัติคำขอลาเรียบร้อย" : "รับทราบและส่งต่อคำขอเรียบร้อย",
-      status: isFinalApproval ? "approved" : "pending",
+    return res.json({
+      message: approval.finalApproval ? "อนุมัติคำขอลาเรียบร้อย" : "รับทราบและส่งต่อคำขอเรียบร้อย",
+      status: approval.status,
       current_assignee_id: nextAssigneeForResponse,
     });
   } catch (err) {
@@ -407,19 +296,16 @@ router.patch("/leave-requests/:id/reject", csrfProtect, async (req, res, next) =
     };
 
     await conn.beginTransaction();
-    const now = new Date();
-
-    await conn.query(
-      "UPDATE leave_requests SET status = 'rejected', approved_by = ?, approved_at = ?, current_assignee_id = NULL WHERE id = ?",
-      [approverId, now, requestId]
-    );
-    await conn.query(
-      `INSERT INTO leave_approvals (leave_request_id, approver_id, status, comment, approved_at)
-       VALUES (?, ?, 'rejected', ?, ?)
-       ON DUPLICATE KEY UPDATE status = 'rejected', comment = ?, approved_at = ?`,
-      [requestId, approverId, comment, now, comment, now]
-    );
-
+    const rejection = await rejectWorkflowRequest({
+      conn,
+      requestTable: "leave_requests",
+      approvalTable: "leave_approvals",
+      approvalRequestColumn: "leave_request_id",
+      requestId,
+      approver: req.user,
+      comment,
+      targetRow: rows[0],
+    });
     await conn.commit();
 
     await logAudit({
@@ -428,7 +314,7 @@ router.patch("/leave-requests/:id/reject", csrfProtect, async (req, res, next) =
       targetType: "leave_request",
       targetId: Number(requestId),
       before,
-      after: { status: "rejected", approved_by: approverId, approved_at: now, comment: comment ?? null },
+      after: { status: "rejected", approved_by: approverId, approved_at: rejection.now, comment: comment ?? null },
       note: comment ?? null,
       conn,
     });
@@ -450,7 +336,7 @@ router.patch("/leave-requests/:id/reject", csrfProtect, async (req, res, next) =
       comment,
     });
 
-    res.json({
+    return res.json({
       message: "ปฏิเสธคำขอลาเรียบร้อย",
       status: "rejected",
       current_assignee_id: null,
@@ -819,34 +705,19 @@ router.patch("/ot-requests/:id/approve", csrfProtect, async (req, res, next) => 
     };
 
     await conn.beginTransaction();
-    const now = new Date();
-
-    // FIXED: lead และ assistant manager ไม่ใช่ final
-    const isFinalApproval = ["manager", "admin"].includes(req.user.role);
-
-    if (isFinalApproval) {
-      await conn.query(
-        "UPDATE ot_requests SET status = 'approved', approved_by = ?, approved_at = ?, current_assignee_id = NULL WHERE id = ?",
-        [approverId, now, requestId]
-      );
-    } else {
-      const nextAssignee = await getNextAssignee(conn, approverId);
-      await conn.query(
-        "UPDATE ot_requests SET current_assignee_id = ? WHERE id = ?",
-        [nextAssignee, requestId]
-      );
-    }
-
-    await conn.query(
-      `INSERT INTO ot_approvals (ot_request_id, approver_id, status, comment, approved_at)
-       VALUES (?, ?, 'approved', ?, ?)
-       ON DUPLICATE KEY UPDATE status = 'approved', comment = ?, approved_at = ?`,
-      [requestId, approverId, comment, now, comment, now]
-    );
-
+    const approval = await approveWorkflowRequest({
+      conn,
+      requestTable: "ot_requests",
+      approvalTable: "ot_approvals",
+      approvalRequestColumn: "ot_request_id",
+      requestId,
+      approver: req.user,
+      comment,
+      targetRow: rows[0],
+    });
     await conn.commit();
 
-    const nextAssigneeForResponse = isFinalApproval ? null : await (async () => {
+    const nextAssigneeForResponse = approval.finalApproval ? null : await (async () => {
       const [updated] = await pool.query(
         "SELECT current_assignee_id FROM ot_requests WHERE id = ?",
         [requestId]
@@ -860,14 +731,14 @@ router.patch("/ot-requests/:id/approve", csrfProtect, async (req, res, next) => 
       targetType: "ot_request",
       targetId: Number(requestId),
       before,
-      after: { status: isFinalApproval ? "approved" : "pending", approved_by: approverId, approved_at: now, comment: comment ?? null },
+      after: { status: approval.status, approved_by: approverId, approved_at: approval.now, comment: comment ?? null },
       note: comment ?? null,
       conn,
     });
 
-    res.json({
-      message: isFinalApproval ? "อนุมัติคำขอ OT เรียบร้อย" : "รับทราบและส่งต่อคำขอเรียบร้อย",
-      status: isFinalApproval ? "approved" : "pending",
+    return res.json({
+      message: approval.finalApproval ? "อนุมัติคำขอ OT เรียบร้อย" : "รับทราบและส่งต่อคำขอเรียบร้อย",
+      status: approval.status,
       current_assignee_id: nextAssigneeForResponse,
     });
   } catch (err) {
@@ -907,19 +778,16 @@ router.patch("/ot-requests/:id/reject", csrfProtect, async (req, res, next) => {
     };
 
     await conn.beginTransaction();
-    const now = new Date();
-
-    await conn.query(
-      "UPDATE ot_requests SET status = 'rejected', approved_by = ?, approved_at = ?, current_assignee_id = NULL WHERE id = ?",
-      [approverId, now, requestId]
-    );
-    await conn.query(
-      `INSERT INTO ot_approvals (ot_request_id, approver_id, status, comment, approved_at)
-       VALUES (?, ?, 'rejected', ?, ?)
-       ON DUPLICATE KEY UPDATE status = 'rejected', comment = ?, approved_at = ?`,
-      [requestId, approverId, comment, now, comment, now]
-    );
-
+    const rejection = await rejectWorkflowRequest({
+      conn,
+      requestTable: "ot_requests",
+      approvalTable: "ot_approvals",
+      approvalRequestColumn: "ot_request_id",
+      requestId,
+      approver: req.user,
+      comment,
+      targetRow: rows[0],
+    });
     await conn.commit();
 
     await logAudit({
@@ -928,12 +796,12 @@ router.patch("/ot-requests/:id/reject", csrfProtect, async (req, res, next) => {
       targetType: "ot_request",
       targetId: Number(requestId),
       before,
-      after: { status: "rejected", approved_by: approverId, approved_at: now, comment: comment ?? null },
+      after: { status: "rejected", approved_by: approverId, approved_at: rejection.now, comment: comment ?? null },
       note: comment ?? null,
       conn,
     });
 
-    res.json({
+    return res.json({
       message: "ปฏิเสธคำขอ OT เรียบร้อย",
       status: "rejected",
       current_assignee_id: null,
