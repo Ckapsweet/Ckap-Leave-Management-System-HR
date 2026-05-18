@@ -8,6 +8,7 @@ import { logAudit } from "../middleware/audit.js";
 import { leaveAttachmentDir, normalizeOriginalName, uploadLeaveAttachments } from "../middleware/upload.js";
 import { notifyLeaveRequestCreated, notifyLeaveRequestSubmitted } from "../services/mailService.js";
 import { calculateLeaveHours, leaveHoursToDays } from "../services/leaveTime.js";
+import { mapLeaveRequestRow } from "../services/leaveRequestHelpers.js";
 
 const router = Router();
 
@@ -30,22 +31,7 @@ function yearBounds(year) {
 
 // ── helper ────────────────────────────────────────────────────
 function mapRow(r) {
-  const isHour = !!r.start_time;
-  let total_hours = null;
-  if (isHour && r.start_time && r.end_time) {
-    total_hours = calculateLeaveHours(r.start_time, r.end_time);
-  }
-  return {
-    ...r,
-    leave_unit: isHour ? "hour" : "day",
-    total_hours,
-    leave_type: {
-      id: r.leave_type_id,
-      name: r.leave_type_name,
-      description: r.leave_type_description,
-      max_days: r.leave_type_max_days,
-    },
-  };
+  return mapLeaveRequestRow(r);
 }
 
 function attachmentUrl(id) {
@@ -559,8 +545,9 @@ router.post("/", authenticate, csrfProtect, uploadLeaveAttachments.array("attach
 
 // ── DELETE /api/leave-requests/:id  (user cancel) ────────────
 router.delete("/:id", authenticate, csrfProtect, async (req, res, next) => {
+  const conn = await pool.getConnection();
   try {
-    const [rows] = await pool.query(
+    const [rows] = await conn.query(
       "SELECT * FROM leave_requests WHERE id = ? AND user_id = ? LIMIT 1",
       [req.params.id, req.user.id]
     );
@@ -569,16 +556,14 @@ router.delete("/:id", authenticate, csrfProtect, async (req, res, next) => {
       return res.status(400).json({ message: "ยกเลิกได้เฉพาะคำขอที่ยังรออนุมัติ" });
     }
 
-    const [files] = await pool.query(
+    const [files] = await conn.query(
       "SELECT stored_name FROM leave_request_attachments WHERE leave_request_id = ?",
       [req.params.id]
     );
 
-    await pool.query("DELETE FROM leave_requests WHERE id = ?", [req.params.id]);
-
-    await Promise.allSettled(
-      files.map((file) => fs.unlink(path.resolve(leaveAttachmentDir, file.stored_name)))
-    );
+    await conn.beginTransaction();
+    await conn.query("DELETE FROM leave_approvals WHERE leave_request_id = ?", [req.params.id]);
+    await conn.query("DELETE FROM leave_requests WHERE id = ?", [req.params.id]);
 
     await logAudit({
       req,
@@ -592,10 +577,22 @@ router.delete("/:id", authenticate, csrfProtect, async (req, res, next) => {
         total_days: rows[0].total_days,
         reason: rows[0].reason,
       },
+      conn,
     });
 
+    await conn.commit();
+
+    await Promise.allSettled(
+      files.map((file) => fs.unlink(path.resolve(leaveAttachmentDir, file.stored_name)))
+    );
+
     res.json({ message: "ยกเลิกคำขอลาเรียบร้อย" });
-  } catch (err) { next(err); }
+  } catch (err) {
+    await conn.rollback();
+    next(err);
+  } finally {
+    conn.release();
+  }
 });
 
 export default router;

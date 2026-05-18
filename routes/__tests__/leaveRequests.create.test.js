@@ -69,6 +69,7 @@ let adminApp;
 let insertedLeaveRequestParams;
 let insertedApprovalParams;
 let deletedLeaveRequestId;
+let deletedApprovalRequestId;
 
 function makeCreatedRow(params) {
   const [
@@ -165,13 +166,18 @@ function mockCreateLeaveQueriesWithOptions({
 }
 
 function mockCancelQueries(row) {
-  pool.query.mockImplementation(async (sql, params) => {
+  conn.query.mockImplementation(async (sql, params) => {
     if (sql.includes("SELECT * FROM leave_requests")) {
       return [[row]];
     }
 
     if (sql.includes("SELECT stored_name FROM leave_request_attachments")) {
       return [[]];
+    }
+
+    if (sql.includes("DELETE FROM leave_approvals")) {
+      deletedApprovalRequestId = params[0];
+      return [{ affectedRows: 1 }];
     }
 
     if (sql.includes("DELETE FROM leave_requests")) {
@@ -303,6 +309,7 @@ beforeEach(() => {
   insertedLeaveRequestParams = null;
   insertedApprovalParams = null;
   deletedLeaveRequestId = null;
+  deletedApprovalRequestId = null;
   Object.assign(mockUser, {
     id: 7,
     employee_code: "EMP007",
@@ -626,6 +633,8 @@ describe("DELETE /api/leave-requests/:id", () => {
       .expect(200);
 
     expect(deletedLeaveRequestId).toBe("301");
+    expect(deletedApprovalRequestId).toBe("301");
+    expect(conn.commit).toHaveBeenCalled();
     expect(logAudit).toHaveBeenCalledWith(expect.objectContaining({
       action: "leave.cancel",
       targetId: 301,
@@ -640,6 +649,7 @@ describe("DELETE /api/leave-requests/:id", () => {
       .expect(400);
 
     expect(deletedLeaveRequestId).toBeNull();
+    expect(deletedApprovalRequestId).toBeNull();
   });
 });
 
