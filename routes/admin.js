@@ -81,7 +81,8 @@ async function attachLeaveFiles(rows) {
   });
   return rows.map((row) => ({ ...row, attachments: byRequest.get(row.id) ?? [] }));
 }
-function assertSameDept(req, res, dept) {
+
+function assertSameDept(req, res, dept) {
   if (canManageDepartment(req.user, dept)) return true;
   res.status(403).json({ message: "ไม่มีสิทธิ์จัดการพนักงานนอกแผนกของคุณ" });
   return false;
@@ -380,7 +381,7 @@ router.patch("/users/:id/assign-subordinate", csrfProtect, async (req, res, next
     const { assign } = req.body;
 
     if (userId === callerId) {
-      return res.status(400).json({ message: "ไม่สามารถกำหนดตนเองเป็นลูกน้องได้" });
+      return res.status(400).json({ message: "ไม่สามารถกำหนดตนเองเป็นทีมได้" });
     }
 
     const [target] = await pool.query(
@@ -395,11 +396,11 @@ router.patch("/users/:id/assign-subordinate", csrfProtect, async (req, res, next
     else allowedSubRoles = ["assistant manager", "lead", "user", "manager"];
 
     if (!allowedSubRoles.includes(target[0].role)) {
-      return res.status(400).json({ message: `ไม่สามารถกำหนด role ${target[0].role} เป็นลูกน้องได้` });
+      return res.status(400).json({ message: `ไม่สามารถกำหนด role ${target[0].role} เป็นทีมได้` });
     }
 
     if (!assign && target[0].supervisor_id !== callerId && callerRole !== "admin") {
-      return res.status(400).json({ message: "พนักงานนี้ไม่ใช่ลูกน้องของคุณ" });
+      return res.status(400).json({ message: "พนักงานนี้ไม่ใช่ทีมของคุณ" });
     }
     if (assign && target[0].supervisor_id !== null && target[0].supervisor_id !== callerId && callerRole !== "admin") {
       return res.status(409).json({ message: "พนักงานนี้มีหัวหน้าอยู่แล้ว กรุณาติดต่อ admin" });
@@ -418,10 +419,10 @@ router.patch("/users/:id/assign-subordinate", csrfProtect, async (req, res, next
       targetType: "user",
       targetId: userId,
       after: { supervisor_id: newSupervisor, full_name: target[0].full_name },
-      note: assign ? `กำหนด ${target[0].role} ${userId} เป็นลูกน้อง` : `ยกเลิก ${target[0].role} ${userId} จากลูกน้อง`,
+      note: assign ? `กำหนด ${target[0].role} ${userId} เป็นทีม` : `ยกเลิก ${target[0].role} ${userId} จากทีม`,
     });
 
-    res.json({ message: assign ? "กำหนดลูกน้องเรียบร้อย" : "ยกเลิกลูกน้องเรียบร้อย", user_id: userId, supervisor_id: newSupervisor });
+    res.json({ message: assign ? "กำหนดทีมเรียบร้อย" : "ยกเลิกทีมเรียบร้อย", user_id: userId, supervisor_id: newSupervisor });
   } catch (err) { next(err); }
 });
 
