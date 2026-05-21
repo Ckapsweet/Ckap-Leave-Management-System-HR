@@ -6,8 +6,10 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 export const leaveAttachmentDir = path.resolve(__dirname, "..", "uploads", "leave-attachments");
+export const eventEvidenceDir = path.resolve(__dirname, "..", "uploads", "event-evidence");
 
 fs.mkdirSync(leaveAttachmentDir, { recursive: true });
+fs.mkdirSync(eventEvidenceDir, { recursive: true });
 
 export function normalizeOriginalName(originalName) {
   try {
@@ -39,6 +41,24 @@ function fileFilter(_req, file, cb) {
 
 export const uploadLeaveAttachments = multer({
   storage,
+  fileFilter,
+  limits: {
+    fileSize: 5 * 1024 * 1024,
+    files: 10,
+  },
+});
+
+const eventEvidenceStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, eventEvidenceDir),
+  filename: (_req, file, cb) => {
+    const safeExt = path.extname(normalizeOriginalName(file.originalname)).toLowerCase();
+    const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+    cb(null, `${unique}${safeExt}`);
+  },
+});
+
+export const uploadEventEvidence = multer({
+  storage: eventEvidenceStorage,
   fileFilter,
   limits: {
     fileSize: 5 * 1024 * 1024,
