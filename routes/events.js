@@ -378,11 +378,19 @@ router.get("/:id/team", async (req, res, next) => {
       return res.json(rows);
     }
 
+    const teamWhere = ["is_active = 1", "role <> 'admin'"];
+    const teamParams = [];
+    if (req.user.role !== "admin") {
+      teamWhere.push("department = ?");
+      teamParams.push(req.user.department);
+    }
+
     const [rows] = await pool.query(
       `SELECT id, employee_code, full_name, department, role, supervisor_id, email, email_2, phone
        FROM users
-       WHERE is_active = 1 AND role <> 'admin'
-       ORDER BY department ASC, full_name ASC`
+       WHERE ${teamWhere.join(" AND ")}
+       ORDER BY department ASC, full_name ASC`,
+      teamParams
     );
     res.json(rows);
   } catch (err) {
@@ -453,15 +461,22 @@ router.patch("/:id/participants", csrfProtect, async (req, res, next) => {
       : [];
 
     if (participantIds.length) {
-      const leadScopeSql = req.user.role === "lead"
-        ? "AND supervisor_id = ?"
-        : "AND role <> 'admin'";
+      const participantWhere = ["id IN (?)", "is_active = 1"];
+      const participantParams = [participantIds];
+      if (req.user.role === "lead") {
+        participantWhere.push("supervisor_id = ?");
+        participantParams.push(req.user.id);
+      } else {
+        participantWhere.push("role <> 'admin'");
+        if (req.user.role !== "admin") {
+          participantWhere.push("department = ?");
+          participantParams.push(req.user.department);
+        }
+      }
       const [validUsers] = await conn.query(
         `SELECT id FROM users
-         WHERE id IN (?)
-           AND is_active = 1
-           ${leadScopeSql}`,
-        req.user.role === "lead" ? [participantIds, req.user.id] : [participantIds]
+         WHERE ${participantWhere.join(" AND ")}`,
+        participantParams
       );
       if (validUsers.length !== participantIds.length) {
         return res.status(400).json({ message: "สมาชิกบางคนไม่มีสิทธิ์เลือกเข้า Event นี้" });
