@@ -13,7 +13,7 @@ const EVENT_COLUMNS = `
   e.id, e.title, e.description, e.start_date, e.end_date, e.created_by, e.lead_id,
   e.department, e.created_at,
   creator.full_name AS creator_name, creator.role AS creator_role,
-  lead.full_name AS lead_name, lead.employee_code AS lead_employee_code
+  lead_user.full_name AS lead_name, lead_user.employee_code AS lead_employee_code
 `;
 
 function canCreateEvent(user) {
@@ -69,10 +69,10 @@ async function mapEvents(rows) {
   const [participants] = await pool.query(
     `SELECT ep.event_id, ep.selected_by_lead_id, ep.selected_at,
             u.id, u.employee_code, u.full_name, u.department, u.role, u.supervisor_id,
-            lead.full_name AS selected_by_lead_name
+            selected_lead.full_name AS selected_by_lead_name
      FROM event_participants ep
      JOIN users u ON u.id = ep.user_id
-     LEFT JOIN users lead ON lead.id = ep.selected_by_lead_id
+     LEFT JOIN users selected_lead ON selected_lead.id = ep.selected_by_lead_id
      WHERE ep.event_id IN (?)
      ORDER BY u.full_name ASC`,
     [ids]
@@ -145,7 +145,7 @@ async function getEventForUser(eventId, user, conn = pool) {
     SELECT ${EVENT_COLUMNS}
     FROM events e
     JOIN users creator ON creator.id = e.created_by
-    JOIN users lead ON lead.id = e.lead_id
+    JOIN users lead_user ON lead_user.id = e.lead_id
     WHERE e.id = ?`;
 
   if (user.role === "assistant manager") {
@@ -177,7 +177,7 @@ router.get("/", async (req, res, next) => {
       SELECT ${EVENT_COLUMNS}
       FROM events e
       JOIN users creator ON creator.id = e.created_by
-      JOIN users lead ON lead.id = e.lead_id
+      JOIN users lead_user ON lead_user.id = e.lead_id
       WHERE 1=1`;
 
     if (req.user.role === "manager") {
@@ -212,7 +212,7 @@ router.get("/my", async (req, res, next) => {
       `SELECT ${EVENT_COLUMNS}
        FROM events e
        JOIN users creator ON creator.id = e.created_by
-       JOIN users lead ON lead.id = e.lead_id
+       JOIN users lead_user ON lead_user.id = e.lead_id
        WHERE EXISTS (
          SELECT 1 FROM event_participants ep
          WHERE ep.event_id = e.id AND ep.user_id = ?
@@ -367,9 +367,9 @@ router.get("/:id/team", async (req, res, next) => {
       const [rows] = await pool.query(
         `SELECT u.id, u.employee_code, u.full_name, u.department, u.role, u.supervisor_id,
                 u.email, u.email_2, u.phone,
-                lead.id AS lead_id, lead.full_name AS lead_name
+                event_lead.id AS lead_id, event_lead.full_name AS lead_name
          FROM event_leads el
-         JOIN users lead ON lead.id = el.lead_id
+         JOIN users event_lead ON event_lead.id = el.lead_id
          JOIN users u ON u.supervisor_id = el.lead_id
          WHERE el.event_id = ? AND el.lead_id = ? AND u.role = 'user' AND u.is_active = 1
          ORDER BY u.full_name ASC`,
@@ -672,8 +672,8 @@ async function canApproveAttendance(req, log, conn = pool) {
     const [[row]] = await conn.query(
       `SELECT 1 AS ok
        FROM event_leads el
-       JOIN users lead ON lead.id = el.lead_id
-       WHERE el.event_id = ? AND lead.supervisor_id = ?
+       JOIN users event_lead ON event_lead.id = el.lead_id
+       WHERE el.event_id = ? AND event_lead.supervisor_id = ?
        LIMIT 1`,
       [log.event_id, req.user.id]
     );
