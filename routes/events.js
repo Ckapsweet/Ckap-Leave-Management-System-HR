@@ -233,15 +233,24 @@ router.get("/my", async (req, res, next) => {
 router.get("/evidence/:attachmentId", async (req, res, next) => {
   try {
     const [rows] = await pool.query(
-      `SELECT eta.*, etl.user_id, etl.event_id, e.department, ep.user_id AS participant_id, el.lead_id
+      `SELECT eta.*, etl.user_id, etl.event_id, e.department, ep.user_id AS participant_id,
+              EXISTS (
+                SELECT 1 FROM event_leads lead_scope
+                WHERE lead_scope.event_id = etl.event_id AND lead_scope.lead_id = ?
+              ) AS is_event_lead,
+              EXISTS (
+                SELECT 1
+                FROM event_leads assistant_scope
+                JOIN users event_lead ON event_lead.id = assistant_scope.lead_id
+                WHERE assistant_scope.event_id = etl.event_id AND event_lead.supervisor_id = ?
+              ) AS is_assistant_scope
        FROM event_time_attachments eta
        JOIN event_time_logs etl ON etl.id = eta.event_time_log_id
        JOIN events e ON e.id = etl.event_id
        LEFT JOIN event_participants ep ON ep.event_id = etl.event_id AND ep.user_id = etl.user_id
-       LEFT JOIN event_leads el ON el.event_id = etl.event_id AND el.lead_id = ?
        WHERE eta.id = ?
        LIMIT 1`,
-      [req.user.id, req.params.attachmentId]
+      [req.user.id, req.user.id, req.params.attachmentId]
     );
     const file = rows[0];
     if (!file) return res.status(404).json({ message: "ไม่พบไฟล์" });
@@ -249,9 +258,12 @@ router.get("/evidence/:attachmentId", async (req, res, next) => {
       file.user_id === req.user.id ||
       req.user.role === "admin" ||
       (req.user.role === "manager" && file.department === req.user.department) ||
-      (["lead", "assistant manager"].includes(req.user.role) && file.lead_id);
+      (req.user.role === "lead" && file.is_event_lead) ||
+      (req.user.role === "assistant manager" && file.is_assistant_scope);
     if (!allowed) return res.status(403).json({ message: "ไม่มีสิทธิ์เปิดไฟล์นี้" });
-    res.download(path.resolve(eventEvidenceDir, file.stored_name), file.original_name);
+    res.setHeader("Content-Type", file.mime_type);
+    res.setHeader("Content-Disposition", `inline; filename*=UTF-8''${encodeURIComponent(file.original_name)}`);
+    res.sendFile(path.resolve(eventEvidenceDir, file.stored_name));
   } catch (err) {
     next(err);
   }
@@ -372,7 +384,7 @@ router.get("/:id/team", async (req, res, next) => {
          JOIN users event_lead ON event_lead.id = el.lead_id
          JOIN users u ON u.supervisor_id = el.lead_id
          WHERE el.event_id = ? AND el.lead_id = ? AND u.role = 'user' AND u.is_active = 1
-         ORDER BY u.full_name ASC`,
+         ORDER BY u.id ASC`,
         [event.id, req.user.id]
       );
       return res.json(rows);
@@ -389,7 +401,7 @@ router.get("/:id/team", async (req, res, next) => {
       `SELECT id, employee_code, full_name, department, role, supervisor_id, email, email_2, phone
        FROM users
        WHERE ${teamWhere.join(" AND ")}
-       ORDER BY department ASC, full_name ASC`,
+       ORDER BY id ASC`,
       teamParams
     );
     res.json(rows);
