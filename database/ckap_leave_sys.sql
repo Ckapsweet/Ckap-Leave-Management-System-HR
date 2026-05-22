@@ -65,6 +65,91 @@ INSERT INTO `departments` (`id`, `name`, `created_at`) VALUES
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `events`
+--
+
+CREATE TABLE `events` (
+  `id` int(11) NOT NULL,
+  `title` varchar(255) NOT NULL,
+  `description` text DEFAULT NULL,
+  `start_date` date NOT NULL,
+  `end_date` date NOT NULL,
+  `created_by` int(11) NOT NULL,
+  `lead_id` int(11) NOT NULL,
+  `department` varchar(255) DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `event_leads`
+--
+
+CREATE TABLE `event_leads` (
+  `id` int(11) NOT NULL,
+  `event_id` int(11) NOT NULL,
+  `lead_id` int(11) NOT NULL,
+  `assigned_at` timestamp NOT NULL DEFAULT current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `event_participants`
+--
+
+CREATE TABLE `event_participants` (
+  `id` int(11) NOT NULL,
+  `event_id` int(11) NOT NULL,
+  `user_id` int(11) NOT NULL,
+  `selected_by_lead_id` int(11) DEFAULT NULL,
+  `selected_at` timestamp NOT NULL DEFAULT current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `event_time_logs`
+--
+
+CREATE TABLE `event_time_logs` (
+  `id` int(11) NOT NULL,
+  `event_id` int(11) NOT NULL,
+  `user_id` int(11) NOT NULL,
+  `event_date` date NOT NULL,
+  `check_in_time` time DEFAULT NULL,
+  `check_out_time` time DEFAULT NULL,
+  `check_in_at` datetime DEFAULT NULL,
+  `check_out_at` datetime DEFAULT NULL,
+  `status` enum('draft','pending','approved','rejected') NOT NULL DEFAULT 'draft',
+  `approved_by` int(11) DEFAULT NULL,
+  `approved_at` datetime DEFAULT NULL,
+  `approval_comment` text DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `event_time_attachments`
+--
+
+CREATE TABLE `event_time_attachments` (
+  `id` int(11) NOT NULL,
+  `event_time_log_id` int(11) NOT NULL,
+  `evidence_type` enum('check_in','check_out') NOT NULL DEFAULT 'check_in',
+  `original_name` varchar(255) NOT NULL,
+  `stored_name` varchar(255) NOT NULL,
+  `mime_type` varchar(100) NOT NULL,
+  `size` int(11) NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `leave_approvals`
 --
 
@@ -323,6 +408,48 @@ ALTER TABLE `departments`
   ADD UNIQUE KEY `name` (`name`);
 
 --
+-- Indexes for table `events`
+--
+ALTER TABLE `events`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_events_lead` (`lead_id`),
+  ADD KEY `idx_events_creator` (`created_by`),
+  ADD KEY `idx_events_department_dates` (`department`,`start_date`,`end_date`);
+
+--
+-- Indexes for table `event_leads`
+--
+ALTER TABLE `event_leads`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_event_lead` (`event_id`,`lead_id`),
+  ADD KEY `idx_event_leads_lead` (`lead_id`);
+
+--
+-- Indexes for table `event_participants`
+--
+ALTER TABLE `event_participants`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_event_user` (`event_id`,`user_id`),
+  ADD KEY `idx_event_participants_user` (`user_id`),
+  ADD KEY `idx_event_participants_lead` (`selected_by_lead_id`);
+
+--
+-- Indexes for table `event_time_logs`
+--
+ALTER TABLE `event_time_logs`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_event_time_user_date` (`event_id`,`user_id`,`event_date`),
+  ADD KEY `idx_event_time_logs_user` (`user_id`),
+  ADD KEY `idx_event_time_logs_approved_by` (`approved_by`);
+
+--
+-- Indexes for table `event_time_attachments`
+--
+ALTER TABLE `event_time_attachments`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_event_time_attachments_log` (`event_time_log_id`);
+
+--
 -- Indexes for table `leave_approvals`
 --
 ALTER TABLE `leave_approvals`
@@ -421,6 +548,36 @@ ALTER TABLE `departments`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=8;
 
 --
+-- AUTO_INCREMENT for table `events`
+--
+ALTER TABLE `events`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `event_leads`
+--
+ALTER TABLE `event_leads`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `event_participants`
+--
+ALTER TABLE `event_participants`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `event_time_logs`
+--
+ALTER TABLE `event_time_logs`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `event_time_attachments`
+--
+ALTER TABLE `event_time_attachments`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT for table `leave_approvals`
 --
 ALTER TABLE `leave_approvals`
@@ -483,6 +640,42 @@ ALTER TABLE `user_leave_pool`
 --
 ALTER TABLE `audit_logs`
   ADD CONSTRAINT `audit_logs_actor_fk` FOREIGN KEY (`actor_id`) REFERENCES `users` (`id`) ON UPDATE CASCADE;
+
+--
+-- Constraints for table `events`
+--
+ALTER TABLE `events`
+  ADD CONSTRAINT `events_created_by_fk` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`),
+  ADD CONSTRAINT `events_lead_fk` FOREIGN KEY (`lead_id`) REFERENCES `users` (`id`);
+
+--
+-- Constraints for table `event_leads`
+--
+ALTER TABLE `event_leads`
+  ADD CONSTRAINT `event_leads_event_fk` FOREIGN KEY (`event_id`) REFERENCES `events` (`id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `event_leads_lead_fk` FOREIGN KEY (`lead_id`) REFERENCES `users` (`id`);
+
+--
+-- Constraints for table `event_participants`
+--
+ALTER TABLE `event_participants`
+  ADD CONSTRAINT `event_participants_event_fk` FOREIGN KEY (`event_id`) REFERENCES `events` (`id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `event_participants_user_fk` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`),
+  ADD CONSTRAINT `event_participants_lead_fk` FOREIGN KEY (`selected_by_lead_id`) REFERENCES `users` (`id`);
+
+--
+-- Constraints for table `event_time_logs`
+--
+ALTER TABLE `event_time_logs`
+  ADD CONSTRAINT `event_time_logs_event_fk` FOREIGN KEY (`event_id`) REFERENCES `events` (`id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `event_time_logs_user_fk` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`),
+  ADD CONSTRAINT `event_time_logs_approved_by_fk` FOREIGN KEY (`approved_by`) REFERENCES `users` (`id`);
+
+--
+-- Constraints for table `event_time_attachments`
+--
+ALTER TABLE `event_time_attachments`
+  ADD CONSTRAINT `event_time_attachments_log_fk` FOREIGN KEY (`event_time_log_id`) REFERENCES `event_time_logs` (`id`) ON DELETE CASCADE;
 
 --
 -- Constraints for table `leave_approvals`

@@ -13,6 +13,7 @@ import superAdminRoutes from "./routes/superAdmin.js";
 import otRequestRoutes from "./routes/otRequests.js";
 import otTypeRoutes from "./routes/otTypes.js";
 import otBalanceRoutes from "./routes/otBalances.js";
+import eventRoutes from "./routes/events.js";
 
 dotenv.config();
 
@@ -44,6 +45,7 @@ app.use("/api/super-admin", superAdminRoutes);
 app.use("/api/ot-requests", otRequestRoutes);
 app.use("/api/ot-types", otTypeRoutes);
 app.use("/api/ot-balances", otBalanceRoutes);
+app.use("/api/events", eventRoutes);
 
 // ── Global error handler ──────────────────────────────────────
 app.use((err, req, res, next) => {
