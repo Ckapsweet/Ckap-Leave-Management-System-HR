@@ -20,6 +20,10 @@ function canCreateEvent(user) {
   return ["manager", "assistant manager", "admin"].includes(user?.role);
 }
 
+function canInputEventAttendance(user) {
+  return ["manager", "assistant manager", "admin"].includes(user?.role);
+}
+
 function canViewAllDepartmentEvents(user) {
   return ["manager", "admin"].includes(user?.role);
 }
@@ -30,6 +34,10 @@ function cleanString(value) {
 
 function isValidDate(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(value ?? ""));
+}
+
+function isValidTime24(value) {
+  return /^([01]\d|2[0-3]):[0-5]\d$/.test(String(value ?? ""));
 }
 
 function toIsoDate(value) {
@@ -272,17 +280,14 @@ router.get("/evidence/:attachmentId", async (req, res, next) => {
 router.get("/leads", async (req, res, next) => {
   try {
     if (!canCreateEvent(req.user)) {
-      return res.status(403).json({ message: "ไม่มีสิทธิ์เลือก Lead สำหรับ Event" });
+      return res.status(403).json({ message: "ไม่มีสิทธิ์เลือกผู้รับผิดชอบสำหรับ Event" });
     }
 
     const params = [];
-    const where = ["role = 'lead'", "is_active = 1"];
-    if (req.user.role === "manager") {
+    const where = ["role <> 'admin'", "is_active = 1"];
+    if (req.user.role === "manager" || req.user.role === "assistant manager") {
       where.push("department = ?");
       params.push(req.user.department);
-    } else if (req.user.role === "assistant manager") {
-      where.push("supervisor_id = ?");
-      params.push(req.user.id);
     }
 
     const [rows] = await pool.query(
@@ -321,21 +326,21 @@ router.post("/", csrfProtect, async (req, res, next) => {
       return res.status(400).json({ message: "วันที่สิ้นสุดต้องไม่น้อยกว่าวันเริ่มต้น" });
     }
     if (!leadIds.length) {
-      return res.status(400).json({ message: "กรุณาเลือก Lead อย่างน้อย 1 คน" });
+      return res.status(400).json({ message: "กรุณาเลือกผู้รับผิดชอบอย่างน้อย 1 คน" });
     }
 
     const [leadRows] = await conn.query(
       `SELECT id, full_name, employee_code, department, role, supervisor_id
        FROM users
-       WHERE id IN (?) AND role = 'lead' AND is_active = 1`,
+       WHERE id IN (?) AND role <> 'admin' AND is_active = 1`,
       [leadIds]
     );
-    if (leadRows.length !== leadIds.length) return res.status(404).json({ message: "ไม่พบ Lead บางคน" });
+    if (leadRows.length !== leadIds.length) return res.status(404).json({ message: "ไม่พบผู้รับผิดชอบบางคน" });
     if (req.user.role === "manager" && leadRows.some((lead) => lead.department !== req.user.department)) {
-      return res.status(403).json({ message: "เลือก Lead ได้เฉพาะในแผนกของคุณ" });
+      return res.status(403).json({ message: "เลือกผู้รับผิดชอบได้เฉพาะในแผนกของคุณ" });
     }
-    if (req.user.role === "assistant manager" && leadRows.some((lead) => lead.supervisor_id !== req.user.id)) {
-      return res.status(403).json({ message: "รอง Manager เลือกได้เฉพาะ Lead ในทีมของตัวเอง" });
+    if (req.user.role === "assistant manager" && leadRows.some((lead) => lead.department !== req.user.department)) {
+      return res.status(403).json({ message: "รอง Manager เลือกผู้รับผิดชอบได้เฉพาะในแผนกของคุณ" });
     }
 
     await conn.beginTransaction();
@@ -362,6 +367,53 @@ router.post("/", csrfProtect, async (req, res, next) => {
 
     const row = await getEventForUser(eventId, req.user);
     res.status(201).json((await mapEvents([row]))[0]);
+  } catch (err) {
+    await conn.rollback();
+    next(err);
+  } finally {
+    conn.release();
+  }
+});
+
+router.delete("/:id", csrfProtect, async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    if (!canCreateEvent(req.user)) {
+      return res.status(403).json({ message: "ไม่มีสิทธิ์ลบ Event" });
+    }
+
+    const event = await getEventForUser(req.params.id, req.user, conn);
+    if (!event) return res.status(404).json({ message: "ไม่พบ Event" });
+
+    const [files] = await conn.query(
+      `SELECT eta.stored_name
+       FROM event_time_attachments eta
+       JOIN event_time_logs etl ON etl.id = eta.event_time_log_id
+       WHERE etl.event_id = ?`,
+      [event.id]
+    );
+
+    await conn.beginTransaction();
+    await conn.query("DELETE FROM events WHERE id = ?", [event.id]);
+    await logAudit({
+      req,
+      action: "event.delete",
+      targetType: "event",
+      targetId: event.id,
+      before: {
+        title: event.title,
+        start_date: event.start_date,
+        end_date: event.end_date,
+        department: event.department,
+      },
+      conn,
+    });
+    await conn.commit();
+
+    if (files.length) {
+      await Promise.allSettled(files.map((file) => fs.unlink(path.resolve(eventEvidenceDir, file.stored_name))));
+    }
+    res.json({ id: event.id });
   } catch (err) {
     await conn.rollback();
     next(err);
@@ -636,6 +688,114 @@ router.post("/:id/attendance", csrfProtect, uploadEventEvidence.fields([
   }
 });
 
+router.post("/:id/attendance/manual", csrfProtect, async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    if (!canInputEventAttendance(req.user)) {
+      return res.status(403).json({ message: "ไม่มีสิทธิ์บันทึกเวลา Event" });
+    }
+
+    const eventId = Number(req.params.id);
+    const userId = Number(req.body.user_id);
+    const eventDate = String(req.body.event_date ?? "").slice(0, 10);
+    const checkInTime = String(req.body.check_in_time ?? "").slice(0, 5);
+    const checkOutTime = String(req.body.check_out_time ?? "").slice(0, 5);
+
+    if (!Number.isInteger(eventId) || eventId <= 0) {
+      return res.status(400).json({ message: "Event ไม่ถูกต้อง" });
+    }
+    if (!Number.isInteger(userId) || userId <= 0) {
+      return res.status(400).json({ message: "ผู้เข้าร่วมไม่ถูกต้อง" });
+    }
+
+    const event = await getEventForUser(eventId, req.user, conn);
+    if (!event) return res.status(404).json({ message: "ไม่พบ Event" });
+    if (!isDateInsideEvent(eventDate, event)) {
+      return res.status(400).json({ message: "วันที่ลงเวลาไม่อยู่ในช่วง Event" });
+    }
+    if (!isValidTime24(checkInTime) || !isValidTime24(checkOutTime)) {
+      return res.status(400).json({ message: "กรุณาระบุเวลาเป็นรูปแบบ 24 ชั่วโมง" });
+    }
+    if (checkOutTime <= checkInTime) {
+      return res.status(400).json({ message: "เวลาออกต้องมากกว่าเวลาเข้า" });
+    }
+
+    const participantParams = [eventId, userId];
+    const participantWhere = [
+      "ep.event_id = ?",
+      "ep.user_id = ?",
+      "u.is_active = 1",
+    ];
+    if (req.user.role === "manager") {
+      participantWhere.push("u.department = ?");
+      participantParams.push(req.user.department);
+    } else if (req.user.role === "assistant manager") {
+      participantWhere.push(`EXISTS (
+        SELECT 1
+        FROM event_leads el
+        JOIN users event_lead ON event_lead.id = el.lead_id
+        WHERE el.event_id = ep.event_id AND event_lead.supervisor_id = ?
+      )`);
+      participantParams.push(req.user.id);
+    }
+
+    const [[participant]] = await conn.query(
+      `SELECT u.id, u.full_name, u.employee_code, u.department
+       FROM event_participants ep
+       JOIN users u ON u.id = ep.user_id
+       WHERE ${participantWhere.join(" AND ")}
+       LIMIT 1`,
+      participantParams
+    );
+    if (!participant) {
+      return res.status(400).json({ message: "ผู้เข้าร่วมคนนี้ไม่มีสิทธิ์ลงเวลาใน Event นี้" });
+    }
+
+    await conn.beginTransaction();
+    await conn.query(
+      `INSERT INTO event_time_logs (
+         event_id, user_id, event_date, check_in_time, check_out_time,
+         check_in_at, check_out_at, status, approved_by, approved_at, approval_comment
+       )
+       VALUES (?, ?, ?, ?, ?, CONCAT(?, ' ', ?), CONCAT(?, ' ', ?), 'approved', ?, NOW(), NULL)
+       ON DUPLICATE KEY UPDATE
+         check_in_time = VALUES(check_in_time),
+         check_out_time = VALUES(check_out_time),
+         check_in_at = VALUES(check_in_at),
+         check_out_at = VALUES(check_out_at),
+         status = 'approved',
+         approved_by = VALUES(approved_by),
+         approved_at = NOW(),
+         approval_comment = NULL`,
+      [eventId, userId, eventDate, checkInTime, checkOutTime, eventDate, checkInTime, eventDate, checkOutTime, req.user.id]
+    );
+    const [[log]] = await conn.query(
+      `SELECT etl.*, u.full_name, u.employee_code, u.department, approver.full_name AS approver_name
+       FROM event_time_logs etl
+       JOIN users u ON u.id = etl.user_id
+       LEFT JOIN users approver ON approver.id = etl.approved_by
+       WHERE etl.event_id = ? AND etl.user_id = ? AND etl.event_date = ?
+       LIMIT 1`,
+      [eventId, userId, eventDate]
+    );
+    await logAudit({
+      req,
+      action: "event.attendance_manual",
+      targetType: "event_time_log",
+      targetId: log.id,
+      after: { user_id: userId, event_date: eventDate, check_in_time: checkInTime, check_out_time: checkOutTime, status: "approved" },
+      conn,
+    });
+    await conn.commit();
+    res.status(201).json({ ...log, attachments: [] });
+  } catch (err) {
+    await conn.rollback();
+    next(err);
+  } finally {
+    conn.release();
+  }
+});
+
 router.post("/:id/check-out", csrfProtect, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
@@ -708,6 +868,68 @@ async function canApproveAttendance(req, log, conn = pool) {
   }
   return false;
 }
+
+async function canManageAttendance(req, log, conn = pool) {
+  if (req.user.role === "admin") return true;
+  if (req.user.role === "manager") return log.department === req.user.department;
+  if (req.user.role === "assistant manager") {
+    const [[row]] = await conn.query(
+      `SELECT 1 AS ok
+       FROM event_leads el
+       JOIN users event_lead ON event_lead.id = el.lead_id
+       WHERE el.event_id = ? AND event_lead.supervisor_id = ?
+       LIMIT 1`,
+      [log.event_id, req.user.id]
+    );
+    return Boolean(row?.ok);
+  }
+  return false;
+}
+
+router.delete("/attendance/:logId", csrfProtect, async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const [[log]] = await conn.query(
+      `SELECT etl.*, e.department
+       FROM event_time_logs etl
+       JOIN events e ON e.id = etl.event_id
+       WHERE etl.id = ?
+       LIMIT 1`,
+      [req.params.logId]
+    );
+    if (!log) return res.status(404).json({ message: "ไม่พบรายการลงเวลา" });
+    if (!(await canManageAttendance(req, log, conn))) {
+      return res.status(403).json({ message: "ไม่มีสิทธิ์ลบบันทึกเวลานี้" });
+    }
+
+    const [files] = await conn.query(
+      "SELECT stored_name FROM event_time_attachments WHERE event_time_log_id = ?",
+      [log.id]
+    );
+
+    await conn.beginTransaction();
+    await conn.query("DELETE FROM event_time_logs WHERE id = ?", [log.id]);
+    await logAudit({
+      req,
+      action: "event.attendance_delete",
+      targetType: "event_time_log",
+      targetId: log.id,
+      before: { event_id: log.event_id, user_id: log.user_id, event_date: log.event_date, status: log.status },
+      conn,
+    });
+    await conn.commit();
+
+    if (files.length) {
+      await Promise.allSettled(files.map((file) => fs.unlink(path.resolve(eventEvidenceDir, file.stored_name))));
+    }
+    res.json({ id: log.id });
+  } catch (err) {
+    await conn.rollback();
+    next(err);
+  } finally {
+    conn.release();
+  }
+});
 
 router.patch("/attendance/:logId/:action", csrfProtect, async (req, res, next) => {
   const conn = await pool.getConnection();
