@@ -301,7 +301,7 @@ CREATE TABLE `users` (
   `full_name` varchar(255) DEFAULT NULL,
   `department` varchar(255) DEFAULT NULL,
   `password` varchar(255) DEFAULT NULL,
-  `role` enum('user','lead','assistant manager','manager','admin') NOT NULL DEFAULT 'user',
+  `role` enum('user','lead','assistant manager','manager','hr','admin') NOT NULL DEFAULT 'user',
   `supervisor_id` int(11) DEFAULT NULL,
   `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
   `email` varchar(255) DEFAULT NULL,

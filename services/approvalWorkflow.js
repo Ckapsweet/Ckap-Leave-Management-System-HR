@@ -7,7 +7,7 @@ export function isFinalApprover(role) {
 }
 
 export function canManageDepartment(user, department) {
-  if (user.role === "admin" || user.role === "manager") return true;
+  if (user.role === "admin" || user.role === "manager" || user.role === "hr") return true;
   return user.role !== "assistant manager" || user.department === department;
 }
 

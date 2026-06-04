@@ -78,7 +78,7 @@ router.post("/users", csrfProtect, async (req, res, next) => {
     if (!employee_code || !full_name || !password) return res.status(400).json({ message: "กรุณากรอกข้อมูลให้ครบถ้วน" });
 
     // เพิ่ม admin เข้าไปใน Role ที่อนุญาตให้สร้างได้
-    const allowedRoles = ["user", "lead", "assistant manager", "manager", "admin"];
+    const allowedRoles = ["user", "lead", "assistant manager", "manager", "hr", "admin"];
     if (!allowedRoles.includes(role)) return res.status(400).json({ message: "role ไม่ถูกต้อง" });
 
     const [exist] = await pool.query("SELECT id FROM users WHERE employee_code = ? AND is_active = 1 LIMIT 1", [employee_code]);
@@ -101,7 +101,7 @@ router.patch("/users/:id/role", csrfProtect, async (req, res, next) => {
   try {
     const { role } = req.body;
     // เพิ่ม admin ใน Role ที่สามารถกำหนดให้กันได้
-    const allowedRoles = ["user", "lead", "assistant manager", "manager", "admin"];
+    const allowedRoles = ["user", "lead", "assistant manager", "manager", "hr", "admin"];
     if (!allowedRoles.includes(role)) return res.status(400).json({ message: "role ไม่ถูกต้อง" });
 
     const [rows] = await pool.query("SELECT id, employee_code, full_name, role FROM users WHERE id = ? AND is_active = 1 LIMIT 1", [req.params.id]);

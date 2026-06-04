@@ -140,6 +140,10 @@ router.get("/leave-requests", async (req, res, next) => {
 router.patch("/leave-requests/:id/approve", csrfProtect, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
+    if (req.user.role === "hr") {
+      return res.status(403).json({ message: "HR ไม่มีสิทธิ์อนุมัติคำขอลา" });
+    }
+
     const { comment = null } = req.body;
     const requestId = req.params.id;
     const approverId = req.user.id;
@@ -266,6 +270,10 @@ router.patch("/leave-requests/:id/approve", csrfProtect, async (req, res, next) 
 router.patch("/leave-requests/:id/reject", csrfProtect, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
+    if (req.user.role === "hr") {
+      return res.status(403).json({ message: "HR ไม่มีสิทธิ์ปฏิเสธคำขอลา" });
+    }
+
     const { comment = null } = req.body;
     const requestId = req.params.id;
     const approverId = req.user.id;
@@ -816,7 +824,7 @@ router.patch("/ot-requests/:id/reject", csrfProtect, async (req, res, next) => {
 // ── GET /api/admin/reports/dashboard-stats ────────────────────
 router.get("/reports/dashboard-stats", async (req, res, next) => {
   try {
-    if (req.user.role !== "admin" && req.user.role !== "manager") {
+    if (req.user.role !== "admin" && req.user.role !== "manager" && req.user.role !== "hr") {
       return res.status(403).json({ message: "ไม่มีสิทธิ์เข้าถึงรายงาน" });
     }
 
@@ -906,7 +914,7 @@ router.get("/reports/dashboard-stats", async (req, res, next) => {
 // ── GET /api/admin/reports/leave-summary ─────────────────────
 router.get("/reports/leave-summary", async (req, res, next) => {
   try {
-    if (req.user.role !== "admin" && req.user.role !== "manager") {
+    if (req.user.role !== "admin" && req.user.role !== "manager" && req.user.role !== "hr") {
       return res.status(403).json({ message: "ไม่มีสิทธิ์เข้าถึงรายงาน" });
     }
 
