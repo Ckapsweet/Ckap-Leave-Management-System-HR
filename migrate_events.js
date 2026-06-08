@@ -39,6 +39,23 @@ async function migrateEvents() {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS event_external_participants (
+      id int(11) NOT NULL AUTO_INCREMENT,
+      event_id int(11) NOT NULL,
+      full_name varchar(255) NOT NULL,
+      department varchar(255) DEFAULT 'บุคคลอื่นๆ',
+      created_by int(11) DEFAULT NULL,
+      created_at timestamp NOT NULL DEFAULT current_timestamp(),
+      PRIMARY KEY (id),
+      UNIQUE KEY uq_event_external_name (event_id, full_name),
+      KEY idx_event_external_participants_event (event_id),
+      KEY idx_event_external_participants_creator (created_by),
+      CONSTRAINT event_external_participants_event_fk FOREIGN KEY (event_id) REFERENCES events (id) ON DELETE CASCADE,
+      CONSTRAINT event_external_participants_creator_fk FOREIGN KEY (created_by) REFERENCES users (id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS event_leads (
       id int(11) NOT NULL AUTO_INCREMENT,
       event_id int(11) NOT NULL,
@@ -125,10 +142,53 @@ async function migrateEvents() {
 
   await ensureColumn("check_in_time", "ALTER TABLE event_time_logs ADD COLUMN check_in_time time DEFAULT NULL AFTER event_date");
   await ensureColumn("check_out_time", "ALTER TABLE event_time_logs ADD COLUMN check_out_time time DEFAULT NULL AFTER check_in_time");
+  await ensureColumn("external_participant_id", "ALTER TABLE event_time_logs ADD COLUMN external_participant_id int(11) DEFAULT NULL AFTER user_id");
   await ensureColumn("status", "ALTER TABLE event_time_logs ADD COLUMN status enum('draft','pending','approved','rejected') NOT NULL DEFAULT 'draft' AFTER check_out_at");
   await ensureColumn("approved_by", "ALTER TABLE event_time_logs ADD COLUMN approved_by int(11) DEFAULT NULL AFTER status");
   await ensureColumn("approved_at", "ALTER TABLE event_time_logs ADD COLUMN approved_at datetime DEFAULT NULL AFTER approved_by");
   await ensureColumn("approval_comment", "ALTER TABLE event_time_logs ADD COLUMN approval_comment text DEFAULT NULL AFTER approved_at");
+
+  const [[userIdNullable]] = await pool.query(`
+    SELECT IS_NULLABLE
+    FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'event_time_logs'
+      AND COLUMN_NAME = 'user_id'
+  `);
+  if (userIdNullable?.IS_NULLABLE === "NO") {
+    await pool.query("ALTER TABLE event_time_logs MODIFY user_id int(11) DEFAULT NULL");
+  }
+
+  const [timeLogIndexes] = await pool.query(`
+    SELECT INDEX_NAME
+    FROM information_schema.STATISTICS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'event_time_logs'
+      AND INDEX_NAME IN ('uq_event_time_external_date', 'idx_event_time_logs_external_participant')
+    GROUP BY INDEX_NAME
+  `);
+  const timeLogIndexNames = new Set(timeLogIndexes.map((row) => row.INDEX_NAME));
+  if (!timeLogIndexNames.has("uq_event_time_external_date")) {
+    await pool.query("ALTER TABLE event_time_logs ADD UNIQUE KEY uq_event_time_external_date (event_id, external_participant_id, event_date)");
+  }
+  if (!timeLogIndexNames.has("idx_event_time_logs_external_participant")) {
+    await pool.query("ALTER TABLE event_time_logs ADD KEY idx_event_time_logs_external_participant (external_participant_id)");
+  }
+
+  const [timeLogConstraints] = await pool.query(`
+    SELECT CONSTRAINT_NAME
+    FROM information_schema.TABLE_CONSTRAINTS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'event_time_logs'
+      AND CONSTRAINT_NAME = 'event_time_logs_external_participant_fk'
+  `);
+  if (!timeLogConstraints.length) {
+    await pool.query(`
+      ALTER TABLE event_time_logs
+      ADD CONSTRAINT event_time_logs_external_participant_fk
+      FOREIGN KEY (external_participant_id) REFERENCES event_external_participants (id) ON DELETE CASCADE
+    `);
+  }
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS event_time_attachments (

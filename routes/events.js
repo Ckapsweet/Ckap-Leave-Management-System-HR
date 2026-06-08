@@ -32,6 +32,11 @@ function cleanString(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function cleanExternalParticipantNames(value) {
+  if (!Array.isArray(value)) return [];
+  return Array.from(new Set(value.map(cleanString).filter(Boolean)));
+}
+
 function isValidDate(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(value ?? ""));
 }
@@ -85,6 +90,13 @@ async function mapEvents(rows) {
      ORDER BY u.full_name ASC`,
     [ids]
   );
+  const [externalParticipants] = await pool.query(
+    `SELECT id, event_id, full_name, department, created_at
+     FROM event_external_participants
+     WHERE event_id IN (?)
+     ORDER BY full_name ASC`,
+    [ids]
+  );
   const leadsByEvent = new Map();
   leads.forEach((lead) => {
     const item = {
@@ -112,6 +124,16 @@ async function mapEvents(rows) {
     };
     byEvent.set(participant.event_id, [...(byEvent.get(participant.event_id) ?? []), item]);
   });
+  const externalByEvent = new Map();
+  externalParticipants.forEach((participant) => {
+    const item = {
+      id: participant.id,
+      full_name: participant.full_name,
+      department: participant.department,
+      created_at: participant.created_at,
+    };
+    externalByEvent.set(participant.event_id, [...(externalByEvent.get(participant.event_id) ?? []), item]);
+  });
   return rows.map((row) => {
     const eventLeads = leadsByEvent.get(row.id) ?? [];
     return {
@@ -120,6 +142,7 @@ async function mapEvents(rows) {
       lead_ids: eventLeads.map((lead) => lead.id),
       lead_name: eventLeads.length ? eventLeads.map((lead) => lead.full_name).join(", ") : row.lead_name,
       participants: byEvent.get(row.id) ?? [],
+      external_participants: externalByEvent.get(row.id) ?? [],
     };
   });
 }
@@ -469,19 +492,24 @@ router.get("/:id/attendance", async (req, res, next) => {
     const params = [event.id];
     let scope = "";
     if (req.user.role === "lead") {
-      scope = " AND (u.supervisor_id = ? OR u.id = ?)";
+      scope = " AND (u.supervisor_id = ? OR u.id = ? OR etl.external_participant_id IS NOT NULL)";
       params.push(req.user.id, req.user.id);
     } else if (req.user.role === "assistant manager") {
       scope = " AND EXISTS (SELECT 1 FROM event_leads el JOIN users lu ON lu.id = el.lead_id WHERE el.event_id = etl.event_id AND lu.supervisor_id = ?)";
       params.push(req.user.id);
     }
     const [logs] = await pool.query(
-      `SELECT etl.*, u.full_name, u.employee_code, u.department, approver.full_name AS approver_name
+      `SELECT etl.*,
+              COALESCE(u.full_name, eep.full_name) AS full_name,
+              u.employee_code,
+              COALESCE(u.department, eep.department) AS department,
+              approver.full_name AS approver_name
        FROM event_time_logs etl
-       JOIN users u ON u.id = etl.user_id
+       LEFT JOIN users u ON u.id = etl.user_id
+       LEFT JOIN event_external_participants eep ON eep.id = etl.external_participant_id
        LEFT JOIN users approver ON approver.id = etl.approved_by
        WHERE etl.event_id = ? ${scope}
-       ORDER BY etl.event_date ASC, u.full_name ASC`,
+       ORDER BY etl.event_date ASC, COALESCE(u.full_name, eep.full_name) ASC`,
       params
     );
     if (!logs.length) return res.json([]);
@@ -523,6 +551,11 @@ router.patch("/:id/participants", csrfProtect, async (req, res, next) => {
     const participantIds = Array.isArray(req.body.participant_ids)
       ? Array.from(new Set(req.body.participant_ids.map(Number))).filter((id) => Number.isInteger(id) && id > 0)
       : [];
+    const externalParticipantNames = cleanExternalParticipantNames(req.body.external_participant_names);
+
+    if (externalParticipantNames.some((name) => name.length > 255)) {
+      return res.status(400).json({ message: "ชื่อบุคคลอื่นต้องไม่เกิน 255 ตัวอักษร" });
+    }
 
     if (participantIds.length) {
       const participantWhere = ["id IN (?)", "is_active = 1"];
@@ -551,6 +584,10 @@ router.patch("/:id/participants", csrfProtect, async (req, res, next) => {
       "SELECT user_id FROM event_participants WHERE event_id = ? ORDER BY user_id ASC",
       [event.id]
     );
+    const [beforeExternalRows] = await conn.query(
+      "SELECT full_name FROM event_external_participants WHERE event_id = ? ORDER BY full_name ASC",
+      [event.id]
+    );
 
     await conn.beginTransaction();
     if (req.user.role === "lead") {
@@ -572,13 +609,27 @@ router.patch("/:id/participants", csrfProtect, async (req, res, next) => {
         [event.id, participantIds]
       );
     }
+    await conn.query("DELETE FROM event_external_participants WHERE event_id = ?", [event.id]);
+    if (externalParticipantNames.length) {
+      await conn.query(
+        `INSERT INTO event_external_participants (event_id, full_name, department, created_by)
+         VALUES ${externalParticipantNames.map(() => "(?, ?, ?, ?)").join(", ")}`,
+        externalParticipantNames.flatMap((name) => [event.id, name, "บุคคลอื่นๆ", req.user.id])
+      );
+    }
     await logAudit({
       req,
       action: "event.participants_update",
       targetType: "event",
       targetId: event.id,
-      before: { participant_ids: beforeRows.map((row) => row.user_id) },
-      after: { participant_ids: participantIds },
+      before: {
+        participant_ids: beforeRows.map((row) => row.user_id),
+        external_participant_names: beforeExternalRows.map((row) => row.full_name),
+      },
+      after: {
+        participant_ids: participantIds,
+        external_participant_names: externalParticipantNames,
+      },
       conn,
     });
     await conn.commit();
@@ -697,14 +748,17 @@ router.post("/:id/attendance/manual", csrfProtect, async (req, res, next) => {
 
     const eventId = Number(req.params.id);
     const userId = Number(req.body.user_id);
+    const externalParticipantId = Number(req.body.external_participant_id);
     const eventDate = String(req.body.event_date ?? "").slice(0, 10);
     const checkInTime = String(req.body.check_in_time ?? "").slice(0, 5);
     const checkOutTime = String(req.body.check_out_time ?? "").slice(0, 5);
+    const hasUserParticipant = Number.isInteger(userId) && userId > 0;
+    const hasExternalParticipant = Number.isInteger(externalParticipantId) && externalParticipantId > 0;
 
     if (!Number.isInteger(eventId) || eventId <= 0) {
       return res.status(400).json({ message: "Event ไม่ถูกต้อง" });
     }
-    if (!Number.isInteger(userId) || userId <= 0) {
+    if (hasUserParticipant === hasExternalParticipant) {
       return res.status(400).json({ message: "ผู้เข้าร่วมไม่ถูกต้อง" });
     }
 
@@ -720,33 +774,56 @@ router.post("/:id/attendance/manual", csrfProtect, async (req, res, next) => {
       return res.status(400).json({ message: "เวลาออกต้องมากกว่าเวลาเข้า" });
     }
 
-    const participantParams = [eventId, userId];
-    const participantWhere = [
-      "ep.event_id = ?",
-      "ep.user_id = ?",
-      "u.is_active = 1",
-    ];
-    if (req.user.role === "manager") {
-      participantWhere.push("u.department = ?");
-      participantParams.push(req.user.department);
-    } else if (req.user.role === "assistant manager") {
-      participantWhere.push(`EXISTS (
-        SELECT 1
-        FROM event_leads el
-        JOIN users event_lead ON event_lead.id = el.lead_id
-        WHERE el.event_id = ep.event_id AND event_lead.supervisor_id = ?
-      )`);
-      participantParams.push(req.user.id);
-    }
+    let participant = null;
+    if (hasUserParticipant) {
+      const participantParams = [eventId, userId];
+      const participantWhere = [
+        "ep.event_id = ?",
+        "ep.user_id = ?",
+        "u.is_active = 1",
+      ];
+      if (req.user.role === "manager") {
+        participantWhere.push("u.department = ?");
+        participantParams.push(req.user.department);
+      } else if (req.user.role === "assistant manager") {
+        participantWhere.push(`EXISTS (
+          SELECT 1
+          FROM event_leads el
+          JOIN users event_lead ON event_lead.id = el.lead_id
+          WHERE el.event_id = ep.event_id AND event_lead.supervisor_id = ?
+        )`);
+        participantParams.push(req.user.id);
+      }
 
-    const [[participant]] = await conn.query(
-      `SELECT u.id, u.full_name, u.employee_code, u.department
-       FROM event_participants ep
-       JOIN users u ON u.id = ep.user_id
-       WHERE ${participantWhere.join(" AND ")}
-       LIMIT 1`,
-      participantParams
-    );
+      [[participant]] = await conn.query(
+        `SELECT u.id, u.full_name, u.employee_code, u.department
+         FROM event_participants ep
+         JOIN users u ON u.id = ep.user_id
+         WHERE ${participantWhere.join(" AND ")}
+         LIMIT 1`,
+        participantParams
+      );
+    } else {
+      const externalWhere = ["event_id = ?", "id = ?"];
+      const externalParams = [eventId, externalParticipantId];
+      if (req.user.role === "assistant manager") {
+        externalWhere.push(`EXISTS (
+          SELECT 1
+          FROM event_leads el
+          JOIN users event_lead ON event_lead.id = el.lead_id
+          WHERE el.event_id = event_external_participants.event_id AND event_lead.supervisor_id = ?
+        )`);
+        externalParams.push(req.user.id);
+      }
+
+      [[participant]] = await conn.query(
+        `SELECT id, full_name, NULL AS employee_code, department
+         FROM event_external_participants
+         WHERE ${externalWhere.join(" AND ")}
+         LIMIT 1`,
+        externalParams
+      );
+    }
     if (!participant) {
       return res.status(400).json({ message: "ผู้เข้าร่วมคนนี้ไม่มีสิทธิ์ลงเวลาใน Event นี้" });
     }
@@ -754,10 +831,10 @@ router.post("/:id/attendance/manual", csrfProtect, async (req, res, next) => {
     await conn.beginTransaction();
     await conn.query(
       `INSERT INTO event_time_logs (
-         event_id, user_id, event_date, check_in_time, check_out_time,
+         event_id, user_id, external_participant_id, event_date, check_in_time, check_out_time,
          check_in_at, check_out_at, status, approved_by, approved_at, approval_comment
        )
-       VALUES (?, ?, ?, ?, ?, CONCAT(?, ' ', ?), CONCAT(?, ' ', ?), 'approved', ?, NOW(), NULL)
+       VALUES (?, ?, ?, ?, ?, ?, CONCAT(?, ' ', ?), CONCAT(?, ' ', ?), 'approved', ?, NOW(), NULL)
        ON DUPLICATE KEY UPDATE
          check_in_time = VALUES(check_in_time),
          check_out_time = VALUES(check_out_time),
@@ -767,23 +844,49 @@ router.post("/:id/attendance/manual", csrfProtect, async (req, res, next) => {
          approved_by = VALUES(approved_by),
          approved_at = NOW(),
          approval_comment = NULL`,
-      [eventId, userId, eventDate, checkInTime, checkOutTime, eventDate, checkInTime, eventDate, checkOutTime, req.user.id]
+      [
+        eventId,
+        hasUserParticipant ? userId : null,
+        hasExternalParticipant ? externalParticipantId : null,
+        eventDate,
+        checkInTime,
+        checkOutTime,
+        eventDate,
+        checkInTime,
+        eventDate,
+        checkOutTime,
+        req.user.id,
+      ]
     );
     const [[log]] = await conn.query(
-      `SELECT etl.*, u.full_name, u.employee_code, u.department, approver.full_name AS approver_name
+      `SELECT etl.*,
+              COALESCE(u.full_name, eep.full_name) AS full_name,
+              u.employee_code,
+              COALESCE(u.department, eep.department) AS department,
+              approver.full_name AS approver_name
        FROM event_time_logs etl
-       JOIN users u ON u.id = etl.user_id
+       LEFT JOIN users u ON u.id = etl.user_id
+       LEFT JOIN event_external_participants eep ON eep.id = etl.external_participant_id
        LEFT JOIN users approver ON approver.id = etl.approved_by
-       WHERE etl.event_id = ? AND etl.user_id = ? AND etl.event_date = ?
+       WHERE etl.event_id = ?
+         AND etl.event_date = ?
+         AND ${hasUserParticipant ? "etl.user_id = ?" : "etl.external_participant_id = ?"}
        LIMIT 1`,
-      [eventId, userId, eventDate]
+      [eventId, eventDate, hasUserParticipant ? userId : externalParticipantId]
     );
     await logAudit({
       req,
       action: "event.attendance_manual",
       targetType: "event_time_log",
       targetId: log.id,
-      after: { user_id: userId, event_date: eventDate, check_in_time: checkInTime, check_out_time: checkOutTime, status: "approved" },
+      after: {
+        user_id: hasUserParticipant ? userId : null,
+        external_participant_id: hasExternalParticipant ? externalParticipantId : null,
+        event_date: eventDate,
+        check_in_time: checkInTime,
+        check_out_time: checkOutTime,
+        status: "approved",
+      },
       conn,
     });
     await conn.commit();
