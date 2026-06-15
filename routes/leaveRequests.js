@@ -377,7 +377,7 @@ router.post("/", authenticate, csrfProtect, uploadLeaveAttachments.array("attach
     }
     const totalDaysToSave = isHour
       ? leaveHoursToDays(totalHoursToSave)
-      : total_days;
+      : Number(total_days);
 
     const year = new Date(start_date).getFullYear();
 

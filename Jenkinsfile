@@ -2,7 +2,7 @@ pipeline {
     agent { label 'leave-backend' }
 
     triggers {
-        pollSCM('H/5 * * * *')
+        pollSCM('H/3 * * * *')
         githubPush()
     }
 
@@ -52,6 +52,8 @@ pipeline {
                     sh '''
                     cd /home/adminis/backend
                     npm install
+                    npm run migrate:hr-role
+                    npm run migrate:leave-balance-decimal
                     '''
                 }
             }

@@ -384,6 +384,320 @@ describe("GET leave request lists", () => {
   });
 });
 
+describe("POST /api/admin/leave-requests - historical leave", () => {
+  it("creates an approved historical leave for the selected employee and updates balances", async () => {
+    mockUser.role = "admin";
+    let balanceUpdated = false;
+    let poolSynced = false;
+
+    conn.query.mockImplementation(async (sql, params) => {
+      if (sql.includes("FROM users WHERE id = ?")) {
+        return [[{
+          id: 22,
+          full_name: "Historical User",
+          employee_code: "EMP022",
+          department: "Marketing",
+          role: "user",
+          supervisor_id: null,
+          email: null,
+          email_2: null,
+        }]];
+      }
+
+      if (sql.includes("INSERT INTO leave_balances")) {
+        balanceUpdated = true;
+        return [{ affectedRows: 1 }];
+      }
+
+      if (sql.includes("INSERT INTO user_leave_pool")) {
+        poolSynced = true;
+        return [{ affectedRows: 1 }];
+      }
+
+      if (sql.includes("FROM leave_types WHERE id = ?")) {
+        return [[{ id: 1, name: "Annual Leave", max_days: 10 }]];
+      }
+
+      if (sql.includes("SELECT id FROM leave_requests") && sql.includes("start_time IS NULL")) {
+        return [[]];
+      }
+
+      if (sql.includes("INSERT INTO leave_requests")) {
+        insertedLeaveRequestParams = params;
+        return [{ insertId: 601 }];
+      }
+
+      if (sql.includes("INSERT INTO leave_approvals")) {
+        insertedApprovalParams = params;
+        return [{ affectedRows: 1 }];
+      }
+
+      return [[]];
+    });
+
+    pool.query.mockImplementation(async (sql) => {
+      if (sql.includes("FROM leave_request_attachments")) return [[]];
+      if (sql.includes("FROM leave_requests lr") && sql.includes("u.full_name AS user_full_name")) {
+        return [[{
+          id: 601,
+          user_id: 22,
+          leave_type_id: 1,
+          start_date: "2026-05-04",
+          end_date: "2026-05-05",
+          start_time: null,
+          end_time: null,
+          total_days: 2,
+          request_type: "leave",
+          reason: "ย้อนหลัง",
+          status: "approved",
+          approved_by: mockUser.id,
+          approved_at: "2026-06-11T08:00:00.000Z",
+          current_assignee_id: null,
+          created_at: "2026-06-11T08:00:00.000Z",
+          user_full_name: "Historical User",
+          employee_code: "EMP022",
+          department: "Marketing",
+          user_role: "user",
+          supervisor_id: null,
+          email: null,
+          email_2: null,
+          phone: null,
+          leave_type_name: "Annual Leave",
+          leave_type_max_days: 10,
+          approver_name: "Admin",
+          comment: "บันทึกประวัติย้อนหลังโดยผู้ดูแล",
+        }]];
+      }
+      return [[]];
+    });
+
+    const res = await request(adminApp)
+      .post("/api/admin/leave-requests")
+      .send({
+        user_id: 22,
+        leave_type_id: 1,
+        start_date: "2026-05-04",
+        end_date: "2026-05-05",
+        request_type: "leave",
+        reason: "ย้อนหลัง",
+      })
+      .expect(201);
+
+    expect(insertedLeaveRequestParams[0]).toBe(22);
+    expect(insertedLeaveRequestParams[6]).toBe(2);
+    expect(insertedLeaveRequestParams[9]).toBe(mockUser.id);
+    expect(insertedApprovalParams[0]).toBe(601);
+    expect(balanceUpdated).toBe(true);
+    expect(poolSynced).toBe(true);
+    expect(logAudit).toHaveBeenCalledWith(expect.objectContaining({
+      action: "leave.create",
+      targetId: 601,
+      note: "บันทึกประวัติการลาย้อนหลัง",
+    }));
+    expect(res.body).toMatchObject({
+      id: 601,
+      user_id: 22,
+      status: "approved",
+      user: {
+        id: 22,
+        full_name: "Historical User",
+      },
+    });
+  });
+});
+
+describe("DELETE /api/admin/leave-requests/:id", () => {
+  it("lets admin delete an approved leave request and restores used balance", async () => {
+    mockUser.role = "admin";
+    let restoredBalance = false;
+    let poolSynced = false;
+    let approvalDeleted = false;
+    let requestDeleted = false;
+
+    conn.query.mockImplementation(async (sql) => {
+      if (sql.includes("FROM leave_requests lr") && sql.includes("JOIN users u")) {
+        return [[{
+          id: 701,
+          user_id: 22,
+          leave_type_id: 1,
+          start_date: "2026-05-04",
+          end_date: "2026-05-05",
+          start_time: null,
+          end_time: null,
+          total_days: 2,
+          reason: "ย้อนหลัง",
+          status: "approved",
+          department: "Marketing",
+        }]];
+      }
+
+      if (sql.includes("SELECT stored_name FROM leave_request_attachments")) {
+        return [[]];
+      }
+
+      if (sql.includes("UPDATE leave_balances")) {
+        restoredBalance = true;
+        return [{ affectedRows: 1 }];
+      }
+
+      if (sql.includes("INSERT INTO user_leave_pool")) {
+        poolSynced = true;
+        return [{ affectedRows: 1 }];
+      }
+
+      if (sql.includes("DELETE FROM leave_approvals")) {
+        approvalDeleted = true;
+        return [{ affectedRows: 1 }];
+      }
+
+      if (sql.includes("DELETE FROM leave_requests")) {
+        requestDeleted = true;
+        return [{ affectedRows: 1 }];
+      }
+
+      return [[]];
+    });
+
+    const res = await request(adminApp)
+      .delete("/api/admin/leave-requests/701")
+      .expect(200);
+
+    expect(restoredBalance).toBe(true);
+    expect(poolSynced).toBe(true);
+    expect(approvalDeleted).toBe(true);
+    expect(requestDeleted).toBe(true);
+    expect(logAudit).toHaveBeenCalledWith(expect.objectContaining({
+      action: "leave.cancel",
+      targetId: 701,
+      note: "ลบรายการลาโดยผู้ดูแล",
+    }));
+    expect(res.body.message).toBe("ลบรายการลาเรียบร้อย");
+  });
+});
+
+describe("PATCH /api/admin/leave-requests/:id", () => {
+  it("updates an approved leave request and rebalances used days", async () => {
+    mockUser.role = "admin";
+    let restoredOldBalance = false;
+    let addedNewBalance = false;
+    let poolSyncCount = 0;
+
+    conn.query.mockImplementation(async (sql, params) => {
+      if (sql.includes("FROM leave_requests lr") && sql.includes("JOIN users u")) {
+        return [[{
+          id: 801,
+          user_id: 22,
+          leave_type_id: 1,
+          start_date: "2026-05-04",
+          end_date: "2026-05-05",
+          start_time: null,
+          end_time: null,
+          total_days: 2,
+          request_type: "leave",
+          reason: "old",
+          status: "approved",
+          department: "Marketing",
+        }]];
+      }
+
+      if (sql.includes("SELECT id, department FROM users")) {
+        return [[{ id: 22, department: "Marketing" }]];
+      }
+
+      if (sql.includes("UPDATE leave_balances")) {
+        restoredOldBalance = true;
+        return [{ affectedRows: 1 }];
+      }
+
+      if (sql.includes("INSERT INTO leave_balances")) {
+        addedNewBalance = true;
+        return [{ affectedRows: 1 }];
+      }
+
+      if (sql.includes("INSERT INTO user_leave_pool")) {
+        poolSyncCount += 1;
+        return [{ affectedRows: 1 }];
+      }
+
+      if (sql.includes("FROM leave_types WHERE id = ?")) {
+        return [[{ id: 1, name: "Annual Leave", max_days: 10 }]];
+      }
+
+      if (sql.includes("SELECT id FROM leave_requests") && sql.includes("id <>")) {
+        return [[]];
+      }
+
+      if (sql.includes("UPDATE leave_requests")) {
+        return [{ affectedRows: 1 }];
+      }
+
+      return [[]];
+    });
+
+    pool.query.mockImplementation(async (sql) => {
+      if (sql.includes("FROM leave_request_attachments")) return [[]];
+      if (sql.includes("FROM leave_requests lr") && sql.includes("u.full_name AS user_full_name")) {
+        return [[{
+          id: 801,
+          user_id: 22,
+          leave_type_id: 1,
+          start_date: "2026-05-04",
+          end_date: "2026-05-06",
+          start_time: null,
+          end_time: null,
+          total_days: 3,
+          request_type: "leave",
+          reason: "updated",
+          status: "approved",
+          approved_by: mockUser.id,
+          approved_at: "2026-06-11T08:00:00.000Z",
+          current_assignee_id: null,
+          created_at: "2026-06-11T08:00:00.000Z",
+          user_full_name: "Historical User",
+          employee_code: "EMP022",
+          department: "Marketing",
+          user_role: "user",
+          supervisor_id: null,
+          email: null,
+          email_2: null,
+          phone: null,
+          leave_type_name: "Annual Leave",
+          leave_type_max_days: 10,
+          approver_name: "Admin",
+          comment: null,
+        }]];
+      }
+      return [[]];
+    });
+
+    const res = await request(adminApp)
+      .patch("/api/admin/leave-requests/801")
+      .send({
+        user_id: 22,
+        leave_type_id: 1,
+        start_date: "2026-05-04",
+        end_date: "2026-05-06",
+        request_type: "leave",
+        reason: "updated",
+      })
+      .expect(200);
+
+    expect(restoredOldBalance).toBe(true);
+    expect(addedNewBalance).toBe(true);
+    expect(poolSyncCount).toBe(1);
+    expect(logAudit).toHaveBeenCalledWith(expect.objectContaining({
+      action: "leave.update",
+      targetId: 801,
+      note: "แก้ไขรายการลาโดยผู้ดูแล",
+    }));
+    expect(res.body).toMatchObject({
+      id: 801,
+      total_days: 3,
+      reason: "updated",
+    });
+  });
+});
+
 describe("POST /api/leave-requests - full-day leave", () => {
   it("creates a full-day pending leave and checks overlapping approved day leave", async () => {
     const res = await request(app)
@@ -444,6 +758,27 @@ describe("POST /api/leave-requests - full-day leave", () => {
 
     expect(insertedLeaveRequestParams).toBeNull();
     expect(conn.beginTransaction).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/leave-requests - half-day leave", () => {
+  it("creates a 0.5 day pending leave without time fields", async () => {
+    const res = await request(app)
+      .post("/api/leave-requests")
+      .send({
+        leave_type_id: 1,
+        start_date: "2026-05-13",
+        end_date: "2026-05-13",
+        request_type: "leave",
+        reason: "Half day errand",
+        total_days: 0.5,
+      })
+      .expect(201);
+
+    expect(insertedLeaveRequestParams[6]).toBe(0.5);
+    expect(insertedLeaveRequestParams[4]).toBeNull();
+    expect(insertedLeaveRequestParams[5]).toBeNull();
+    expect(res.body.total_days).toBe(0.5);
   });
 });
 

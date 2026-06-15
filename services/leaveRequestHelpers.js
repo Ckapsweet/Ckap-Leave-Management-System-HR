@@ -19,13 +19,14 @@ export function yearBounds(year) {
 
 export function mapLeaveRequestRow(row, { includeUser = false } = {}) {
   const isHour = Boolean(row.start_time);
+  const isHalfDay = !isHour && Number(row.total_days ?? 0) === 0.5;
   const totalHours = isHour && row.start_time && row.end_time
     ? calculateLeaveHours(row.start_time, row.end_time)
     : null;
 
   const mapped = {
     ...row,
-    leave_unit: isHour ? "hour" : "day",
+    leave_unit: isHour ? "hour" : isHalfDay ? "half_day" : "day",
     total_hours: totalHours,
     leave_type: {
       id: row.leave_type_id,
