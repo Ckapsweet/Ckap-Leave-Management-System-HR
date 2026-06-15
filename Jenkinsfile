@@ -52,6 +52,8 @@ pipeline {
                     sh '''
                     cd /home/adminis/backend
                     npm install
+                    npm run migrate:hr-role
+                    npm run migrate:leave-balance-decimal
                     '''
                 }
             }

@@ -189,8 +189,8 @@ CREATE TABLE `leave_balances` (
   `id` int(11) NOT NULL,
   `user_id` int(11) DEFAULT NULL,
   `leave_type_id` int(11) DEFAULT NULL,
-  `total_days` int(11) DEFAULT NULL,
-  `used_days` int(11) DEFAULT 0,
+  `total_days` decimal(6,2) DEFAULT NULL,
+  `used_days` decimal(6,2) DEFAULT 0.00,
   `year` int(11) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

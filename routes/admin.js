@@ -1,8 +1,11 @@
 // routes/admin.js
 import { Router } from "express";
+import fs from "fs/promises";
+import path from "path";
 import pool from "../config/db.js";
 import { authenticate, requireAdmin, csrfProtect } from "../middleware/auth.js";
 import { logAudit } from "../middleware/audit.js";
+import { leaveAttachmentDir, normalizeOriginalName, uploadLeaveAttachments } from "../middleware/upload.js";
 import { notifyLeaveRequestForwarded, notifyLeaveRequestResolved } from "../services/mailService.js";
 import { calculateLeaveHours, leaveHoursToDays } from "../services/leaveTime.js";
 import {
@@ -134,6 +137,456 @@ router.get("/leave-requests", async (req, res, next) => {
     const [rows] = await pool.query(sql, params);
     res.json(await attachLeaveFiles(rows.map(mapRow)));
   } catch (err) { next(err); }
+});
+
+// ── POST /api/admin/leave-requests (historical approved leave) ──────────────
+router.post("/leave-requests", csrfProtect, uploadLeaveAttachments.array("attachments", 10), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    if (!["admin", "manager", "hr"].includes(req.user.role)) {
+      return res.status(403).json({ message: "ไม่มีสิทธิ์บันทึกประวัติการลาย้อนหลัง" });
+    }
+
+    const {
+      user_id,
+      leave_type_id,
+      start_date,
+      end_date,
+      start_time = null,
+      end_time = null,
+      total_days = null,
+      request_type = "leave",
+      reason,
+    } = req.body;
+
+    if (!user_id || !leave_type_id || !start_date || !end_date || !reason) {
+      return res.status(400).json({ message: "กรุณากรอกข้อมูลให้ครบถ้วน" });
+    }
+
+    const [users] = await conn.query(
+      "SELECT id, full_name, employee_code, department, role, supervisor_id, email, email_2 FROM users WHERE id = ? AND is_active = 1 LIMIT 1",
+      [user_id]
+    );
+    if (!users[0]) return res.status(404).json({ message: "ไม่พบพนักงาน" });
+    if (!assertSameDept(req, res, users[0].department)) return;
+
+    const [types] = await conn.query(
+      "SELECT id, name, max_days FROM leave_types WHERE id = ? LIMIT 1",
+      [leave_type_id]
+    );
+    if (!types[0]) return res.status(400).json({ message: "ประเภทการลาไม่ถูกต้อง" });
+
+    const isHour = Boolean(start_time);
+    const totalHours = isHour ? calculateLeaveHours(start_time, end_time) : null;
+    if (isHour && (!end_time || totalHours <= 0)) {
+      return res.status(400).json({ message: "กรุณาระบุช่วงเวลาลาให้ถูกต้อง" });
+    }
+
+    const start = new Date(start_date);
+    const end = new Date(end_date);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) {
+      return res.status(400).json({ message: "วันที่ลาไม่ถูกต้อง" });
+    }
+
+    const requestedDays = Number(total_days);
+    const totalDaysToSave = isHour
+      ? leaveHoursToDays(totalHours)
+      : requestedDays === 0.5
+        ? 0.5
+        : Math.max(1, Math.ceil((end.getTime() - start.getTime()) / 86_400_000) + 1);
+    const year = start.getFullYear();
+
+    if (!isHour) {
+      const [overlap] = await conn.query(
+        `SELECT id FROM leave_requests
+         WHERE user_id = ? AND status = 'approved'
+           AND start_time IS NULL
+           AND start_date <= ? AND end_date >= ?`,
+        [user_id, end_date, start_date]
+      );
+      if (overlap.length > 0) {
+        return res.status(409).json({ message: "วันที่ลาทับซ้อนกับประวัติที่อนุมัติแล้ว" });
+      }
+    }
+
+    await conn.beginTransaction();
+
+    const approvedAt = new Date();
+    const [result] = await conn.query(
+      `INSERT INTO leave_requests
+         (user_id, leave_type_id, start_date, end_date, start_time, end_time, total_days, request_type, reason, status, approved_by, approved_at, current_assignee_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'approved', ?, ?, NULL)`,
+      [user_id, leave_type_id, start_date, end_date, isHour ? start_time : null, isHour ? end_time : null, totalDaysToSave, request_type, reason, req.user.id, approvedAt]
+    );
+
+    if (req.files?.length) {
+      const values = req.files.map((file) => [
+        result.insertId,
+        normalizeOriginalName(file.originalname),
+        file.filename,
+        file.mimetype,
+        file.size,
+      ]);
+      await conn.query(
+        `INSERT INTO leave_request_attachments
+           (leave_request_id, original_name, stored_name, mime_type, size)
+         VALUES ?`,
+        [values]
+      );
+    }
+
+    await conn.query(
+      `INSERT INTO leave_approvals (leave_request_id, approver_id, status, comment, approved_at)
+       VALUES (?, ?, 'approved', ?, ?)`,
+      [result.insertId, req.user.id, "บันทึกประวัติย้อนหลังโดยผู้ดูแล", approvedAt]
+    );
+
+    await conn.query(
+      `INSERT INTO leave_balances (user_id, leave_type_id, total_days, used_days, year)
+       SELECT ?, ?, max_days, ?, ? FROM leave_types WHERE id = ?
+       ON DUPLICATE KEY UPDATE used_days = used_days + ?`,
+      [user_id, leave_type_id, totalDaysToSave, year, leave_type_id, totalDaysToSave]
+    );
+
+    await conn.query(
+      `INSERT INTO user_leave_pool (user_id, total_days, used_days, year)
+       SELECT ?, COALESCE(SUM(total_days), 0), COALESCE(SUM(used_days), 0), ?
+       FROM leave_balances
+       WHERE user_id = ? AND year = ?
+       ON DUPLICATE KEY UPDATE total_days = VALUES(total_days), used_days = VALUES(used_days)`,
+      [user_id, year, user_id, year]
+    );
+
+    await logAudit({
+      req,
+      action: "leave.create",
+      targetType: "leave_request",
+      targetId: result.insertId,
+      after: {
+        user_id,
+        leave_type_id,
+        start_date,
+        end_date,
+        start_time: isHour ? start_time : null,
+        end_time: isHour ? end_time : null,
+        total_days: totalDaysToSave,
+        request_type,
+        reason,
+        status: "approved",
+        historical: true,
+      },
+      note: "บันทึกประวัติการลาย้อนหลัง",
+      conn,
+    });
+
+    await conn.commit();
+
+    const [rows] = await pool.query(
+      `SELECT lr.*, u.full_name AS user_full_name, u.employee_code, u.department, u.role AS user_role, u.supervisor_id,
+              u.email, u.email_2, u.phone,
+              lt.name AS leave_type_name, lt.max_days AS leave_type_max_days,
+              approver.full_name AS approver_name, la.comment
+       FROM leave_requests lr
+       JOIN users u ON lr.user_id = u.id
+       JOIN leave_types lt ON lr.leave_type_id = lt.id
+       LEFT JOIN users approver ON lr.approved_by = approver.id
+       ${latestLeaveApprovalJoin}
+       WHERE lr.id = ?`,
+      [result.insertId]
+    );
+
+    const withFiles = await attachLeaveFiles(rows);
+    res.status(201).json(mapRow(withFiles[0]));
+  } catch (err) {
+    await conn.rollback();
+    if (req.files?.length) {
+      await Promise.allSettled(
+        req.files.map((file) => fs.unlink(path.resolve(leaveAttachmentDir, file.filename)))
+      );
+    }
+    next(err);
+  } finally {
+    conn.release();
+  }
+});
+
+// ── PATCH /api/admin/leave-requests/:id ──────────────
+router.patch("/leave-requests/:id", csrfProtect, async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    if (!["admin", "manager", "hr"].includes(req.user.role)) {
+      return res.status(403).json({ message: "ไม่มีสิทธิ์แก้ไขรายการลา" });
+    }
+
+    const {
+      user_id,
+      leave_type_id,
+      start_date,
+      end_date,
+      start_time = null,
+      end_time = null,
+      total_days = null,
+      request_type = "leave",
+      reason,
+    } = req.body;
+
+    if (!user_id || !leave_type_id || !start_date || !end_date || !reason) {
+      return res.status(400).json({ message: "กรุณากรอกข้อมูลให้ครบถ้วน" });
+    }
+
+    const [existingRows] = await conn.query(
+      `SELECT lr.*, u.department
+       FROM leave_requests lr
+       JOIN users u ON u.id = lr.user_id
+       WHERE lr.id = ?
+       LIMIT 1`,
+      [req.params.id]
+    );
+    const beforeRow = existingRows[0];
+    if (!beforeRow) return res.status(404).json({ message: "ไม่พบรายการลา" });
+    if (!assertSameDept(req, res, beforeRow.department)) return;
+
+    const [users] = await conn.query(
+      "SELECT id, department FROM users WHERE id = ? AND is_active = 1 LIMIT 1",
+      [user_id]
+    );
+    if (!users[0]) return res.status(404).json({ message: "ไม่พบพนักงาน" });
+    if (!assertSameDept(req, res, users[0].department)) return;
+
+    const [types] = await conn.query(
+      "SELECT id, name, max_days FROM leave_types WHERE id = ? LIMIT 1",
+      [leave_type_id]
+    );
+    if (!types[0]) return res.status(400).json({ message: "ประเภทการลาไม่ถูกต้อง" });
+
+    const isHour = Boolean(start_time);
+    const totalHours = isHour ? calculateLeaveHours(start_time, end_time) : null;
+    if (isHour && (!end_time || totalHours <= 0)) {
+      return res.status(400).json({ message: "กรุณาระบุช่วงเวลาลาให้ถูกต้อง" });
+    }
+
+    const start = new Date(start_date);
+    const end = new Date(end_date);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) {
+      return res.status(400).json({ message: "วันที่ลาไม่ถูกต้อง" });
+    }
+
+    const requestedDays = Number(total_days);
+    const totalDaysToSave = isHour
+      ? leaveHoursToDays(totalHours)
+      : requestedDays === 0.5
+        ? 0.5
+        : Math.max(1, Math.ceil((end.getTime() - start.getTime()) / 86_400_000) + 1);
+    const newYear = start.getFullYear();
+    const oldYear = new Date(beforeRow.start_date).getFullYear();
+
+    if (!isHour) {
+      const [overlap] = await conn.query(
+        `SELECT id FROM leave_requests
+         WHERE id <> ?
+           AND user_id = ?
+           AND status = 'approved'
+           AND start_time IS NULL
+           AND start_date <= ? AND end_date >= ?`,
+        [req.params.id, user_id, end_date, start_date]
+      );
+      if (overlap.length > 0) {
+        return res.status(409).json({ message: "วันที่ลาทับซ้อนกับประวัติที่อนุมัติแล้ว" });
+      }
+    }
+
+    await conn.beginTransaction();
+
+    await conn.query(
+      `UPDATE leave_requests
+       SET user_id = ?,
+           leave_type_id = ?,
+           start_date = ?,
+           end_date = ?,
+           start_time = ?,
+           end_time = ?,
+           total_days = ?,
+           request_type = ?,
+           reason = ?
+       WHERE id = ?`,
+      [user_id, leave_type_id, start_date, end_date, isHour ? start_time : null, isHour ? end_time : null, totalDaysToSave, request_type, reason, req.params.id]
+    );
+
+    if (beforeRow.status === "approved") {
+      await conn.query(
+        `UPDATE leave_balances
+         SET used_days = GREATEST(used_days - ?, 0)
+         WHERE user_id = ? AND leave_type_id = ? AND year = ?`,
+        [Number(beforeRow.total_days ?? 0), beforeRow.user_id, beforeRow.leave_type_id, oldYear]
+      );
+
+      await conn.query(
+        `INSERT INTO leave_balances (user_id, leave_type_id, total_days, used_days, year)
+         SELECT ?, ?, max_days, ?, ? FROM leave_types WHERE id = ?
+         ON DUPLICATE KEY UPDATE used_days = used_days + ?`,
+        [user_id, leave_type_id, totalDaysToSave, newYear, leave_type_id, totalDaysToSave]
+      );
+
+      const syncPairs = new Set([
+        `${beforeRow.user_id}:${oldYear}`,
+        `${user_id}:${newYear}`,
+      ]);
+      for (const pair of syncPairs) {
+        const [syncUserId, syncYear] = pair.split(":").map(Number);
+        await conn.query(
+          `INSERT INTO user_leave_pool (user_id, total_days, used_days, year)
+           SELECT ?, COALESCE(SUM(total_days), 0), COALESCE(SUM(used_days), 0), ?
+           FROM leave_balances
+           WHERE user_id = ? AND year = ?
+           ON DUPLICATE KEY UPDATE total_days = VALUES(total_days), used_days = VALUES(used_days)`,
+          [syncUserId, syncYear, syncUserId, syncYear]
+        );
+      }
+    }
+
+    await logAudit({
+      req,
+      action: "leave.update",
+      targetType: "leave_request",
+      targetId: Number(req.params.id),
+      before: {
+        user_id: beforeRow.user_id,
+        leave_type_id: beforeRow.leave_type_id,
+        start_date: beforeRow.start_date,
+        end_date: beforeRow.end_date,
+        start_time: beforeRow.start_time,
+        end_time: beforeRow.end_time,
+        total_days: beforeRow.total_days,
+        request_type: beforeRow.request_type,
+        reason: beforeRow.reason,
+        status: beforeRow.status,
+      },
+      after: {
+        user_id,
+        leave_type_id,
+        start_date,
+        end_date,
+        start_time: isHour ? start_time : null,
+        end_time: isHour ? end_time : null,
+        total_days: totalDaysToSave,
+        request_type,
+        reason,
+        status: beforeRow.status,
+      },
+      note: "แก้ไขรายการลาโดยผู้ดูแล",
+      conn,
+    });
+
+    await conn.commit();
+
+    const [rows] = await pool.query(
+      `SELECT lr.*, u.full_name AS user_full_name, u.employee_code, u.department, u.role AS user_role, u.supervisor_id,
+              u.email, u.email_2, u.phone,
+              lt.name AS leave_type_name, lt.max_days AS leave_type_max_days,
+              approver.full_name AS approver_name, la.comment
+       FROM leave_requests lr
+       JOIN users u ON lr.user_id = u.id
+       JOIN leave_types lt ON lr.leave_type_id = lt.id
+       LEFT JOIN users approver ON lr.approved_by = approver.id
+       ${latestLeaveApprovalJoin}
+       WHERE lr.id = ?`,
+      [req.params.id]
+    );
+
+    const withFiles = await attachLeaveFiles(rows);
+    res.json(mapRow(withFiles[0]));
+  } catch (err) {
+    await conn.rollback();
+    next(err);
+  } finally {
+    conn.release();
+  }
+});
+
+// ── DELETE /api/admin/leave-requests/:id ──────────────
+router.delete("/leave-requests/:id", csrfProtect, async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    if (!["admin", "manager", "hr"].includes(req.user.role)) {
+      return res.status(403).json({ message: "ไม่มีสิทธิ์ลบรายการลา" });
+    }
+
+    const [rows] = await conn.query(
+      `SELECT lr.*, u.department
+       FROM leave_requests lr
+       JOIN users u ON u.id = lr.user_id
+       WHERE lr.id = ?
+       LIMIT 1`,
+      [req.params.id]
+    );
+    const requestRow = rows[0];
+    if (!requestRow) return res.status(404).json({ message: "ไม่พบรายการลา" });
+    if (!assertSameDept(req, res, requestRow.department)) return;
+
+    const [files] = await conn.query(
+      "SELECT stored_name FROM leave_request_attachments WHERE leave_request_id = ?",
+      [req.params.id]
+    );
+
+    await conn.beginTransaction();
+
+    if (requestRow.status === "approved") {
+      const year = new Date(requestRow.start_date).getFullYear();
+      const daysToRestore = Number(requestRow.total_days ?? 0);
+
+      await conn.query(
+        `UPDATE leave_balances
+         SET used_days = GREATEST(used_days - ?, 0)
+         WHERE user_id = ? AND leave_type_id = ? AND year = ?`,
+        [daysToRestore, requestRow.user_id, requestRow.leave_type_id, year]
+      );
+
+      await conn.query(
+        `INSERT INTO user_leave_pool (user_id, total_days, used_days, year)
+         SELECT ?, COALESCE(SUM(total_days), 0), COALESCE(SUM(used_days), 0), ?
+         FROM leave_balances
+         WHERE user_id = ? AND year = ?
+         ON DUPLICATE KEY UPDATE total_days = VALUES(total_days), used_days = VALUES(used_days)`,
+        [requestRow.user_id, year, requestRow.user_id, year]
+      );
+    }
+
+    await conn.query("DELETE FROM leave_approvals WHERE leave_request_id = ?", [req.params.id]);
+    await conn.query("DELETE FROM leave_requests WHERE id = ?", [req.params.id]);
+
+    await logAudit({
+      req,
+      action: "leave.cancel",
+      targetType: "leave_request",
+      targetId: requestRow.id,
+      before: {
+        user_id: requestRow.user_id,
+        leave_type_id: requestRow.leave_type_id,
+        status: requestRow.status,
+        start_date: requestRow.start_date,
+        end_date: requestRow.end_date,
+        start_time: requestRow.start_time,
+        end_time: requestRow.end_time,
+        total_days: requestRow.total_days,
+        reason: requestRow.reason,
+      },
+      note: "ลบรายการลาโดยผู้ดูแล",
+      conn,
+    });
+
+    await conn.commit();
+
+    await Promise.allSettled(
+      files.map((file) => fs.unlink(path.resolve(leaveAttachmentDir, file.stored_name)))
+    );
+
+    res.json({ message: "ลบรายการลาเรียบร้อย" });
+  } catch (err) {
+    await conn.rollback();
+    next(err);
+  } finally {
+    conn.release();
+  }
 });
 
 // ── PATCH /api/admin/leave-requests/:id/approve ──────────────
@@ -482,12 +935,24 @@ router.get("/leave-pool/:user_id", async (req, res, next) => {
       acc[key] = (acc[key] ?? 0) + getLeaveDaysFromRow(row);
       return acc;
     }, {});
+    const usagePartsByType = approvedRows.reduce((acc, row) => {
+      const key = balanceKey(row.name, row.leave_type_id);
+      const current = acc[key] ?? { used_day_units: 0, used_hours: 0 };
+      if (row.start_time && row.end_time) {
+        current.used_hours += calculateLeaveHours(row.start_time, row.end_time);
+      } else {
+        current.used_day_units += Number(row.total_days ?? 0);
+      }
+      acc[key] = current;
+      return acc;
+    }, {});
 
     const balanceMap = new Map();
     bRows.forEach((b) => {
       const key = balanceKey(b.name, b.leave_type_id);
       const totalDays = Number(b.total_days ?? b.default_max);
       const usedDays = Number(Number(usedByType[key] ?? b.used_days ?? 0).toFixed(2));
+      const usageParts = usagePartsByType[key] ?? { used_day_units: usedDays, used_hours: 0 };
       const existing = balanceMap.get(key);
 
       if (!existing) {
@@ -496,6 +961,8 @@ router.get("/leave-pool/:user_id", async (req, res, next) => {
           name: b.name,
           total_days: totalDays,
           used_days: usedDays,
+          used_day_units: Number(usageParts.used_day_units.toFixed(2)),
+          used_hours: Number(usageParts.used_hours.toFixed(2)),
         });
         return;
       }
@@ -505,6 +972,8 @@ router.get("/leave-pool/:user_id", async (req, res, next) => {
       existing.used_days = usedByType[key] != null
         ? existing.used_days
         : Number((existing.used_days + usedDays).toFixed(2));
+      existing.used_day_units = Number(((existing.used_day_units ?? 0) + usageParts.used_day_units).toFixed(2));
+      existing.used_hours = Number(((existing.used_hours ?? 0) + usageParts.used_hours).toFixed(2));
     });
     const balances = Array.from(balanceMap.values())
       .map((balance) => ({
@@ -514,10 +983,14 @@ router.get("/leave-pool/:user_id", async (req, res, next) => {
       .sort((a, b) => a.leave_type_id - b.leave_type_id);
 
     const totalUsedDays = Number(balances.reduce((sum, balance) => sum + balance.used_days, 0).toFixed(2));
+    const totalUsedDayUnits = Number(balances.reduce((sum, balance) => sum + (balance.used_day_units ?? 0), 0).toFixed(2));
+    const totalUsedHours = Number(balances.reduce((sum, balance) => sum + (balance.used_hours ?? 0), 0).toFixed(2));
 
     res.json({
       ...poolData,
       used_days: totalUsedDays,
+      used_day_units: totalUsedDayUnits,
+      used_hours: totalUsedHours,
       remaining: Math.max(0, poolData.total_days - totalUsedDays),
       balances
     });
