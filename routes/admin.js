@@ -951,7 +951,7 @@ router.get("/leave-pool/:user_id", async (req, res, next) => {
     bRows.forEach((b) => {
       const key = balanceKey(b.name, b.leave_type_id);
       const totalDays = Number(b.total_days ?? b.default_max);
-      const usedDays = Number(Number(usedByType[key] ?? b.used_days ?? 0).toFixed(2));
+      const usedDays = Number(Number(usedByType[key] ?? b.used_days ?? 0).toFixed(6));
       const usageParts = usagePartsByType[key] ?? { used_day_units: usedDays, used_hours: 0 };
       const existing = balanceMap.get(key);
 
@@ -971,18 +971,18 @@ router.get("/leave-pool/:user_id", async (req, res, next) => {
       existing.total_days = Math.max(existing.total_days, totalDays);
       existing.used_days = usedByType[key] != null
         ? existing.used_days
-        : Number((existing.used_days + usedDays).toFixed(2));
+        : Number((existing.used_days + usedDays).toFixed(6));
       existing.used_day_units = Number(((existing.used_day_units ?? 0) + usageParts.used_day_units).toFixed(2));
       existing.used_hours = Number(((existing.used_hours ?? 0) + usageParts.used_hours).toFixed(2));
     });
     const balances = Array.from(balanceMap.values())
       .map((balance) => ({
         ...balance,
-        remaining: Math.max(0, Number((balance.total_days - balance.used_days).toFixed(2))),
+        remaining: Math.max(0, Number((balance.total_days - balance.used_days).toFixed(6))),
       }))
       .sort((a, b) => a.leave_type_id - b.leave_type_id);
 
-    const totalUsedDays = Number(balances.reduce((sum, balance) => sum + balance.used_days, 0).toFixed(2));
+    const totalUsedDays = Number(balances.reduce((sum, balance) => sum + balance.used_days, 0).toFixed(6));
     const totalUsedDayUnits = Number(balances.reduce((sum, balance) => sum + (balance.used_day_units ?? 0), 0).toFixed(2));
     const totalUsedHours = Number(balances.reduce((sum, balance) => sum + (balance.used_hours ?? 0), 0).toFixed(2));
 
@@ -1027,7 +1027,7 @@ router.patch("/leave-pool/:user_id", csrfProtect, async (req, res, next) => {
     const usedByType = new Map(existingRows.map((row) => [Number(row.leave_type_id), Number(row.used_days ?? 0)]));
     const balanceValues = balances.map((b) => {
       const leaveTypeId = Number(b.leave_type_id);
-      const totalDays = Number(b.total_days);
+      const totalDays = Number(Number(b.total_days).toFixed(6));
       const used = usedByType.get(leaveTypeId) ?? 0;
       totalGlobalDays += totalDays;
       totalGlobalUsed += used;
@@ -1085,12 +1085,12 @@ router.patch("/leave-pool/:user_id", csrfProtect, async (req, res, next) => {
       }
       existing.leave_type_id = Math.min(existing.leave_type_id, b.leave_type_id);
       existing.total_days = Math.max(existing.total_days, totalDays);
-      existing.used_days = Number((existing.used_days + usedDays).toFixed(2));
+      existing.used_days = Number((existing.used_days + usedDays).toFixed(6));
     });
     const updatedBalances = Array.from(updatedBalanceMap.values())
       .map((balance) => ({
         ...balance,
-        remaining: Math.max(0, Number((balance.total_days - balance.used_days).toFixed(2))),
+        remaining: Math.max(0, Number((balance.total_days - balance.used_days).toFixed(6))),
       }))
       .sort((a, b) => a.leave_type_id - b.leave_type_id);
 

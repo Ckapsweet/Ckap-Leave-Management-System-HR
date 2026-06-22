@@ -10,6 +10,10 @@ function balanceKey(name, id) {
   return String(name ?? id).trim().toLowerCase();
 }
 
+function roundLeaveDays(value) {
+  return Number(Number(value ?? 0).toFixed(6));
+}
+
 function yearBounds(year) {
   const numericYear = Number(year);
   if (!Number.isInteger(numericYear) || numericYear < 1000 || numericYear > 9999) return null;
@@ -70,7 +74,7 @@ async function getBalancesByType(userId, year) {
   rows.forEach((row) => {
     const totalDays = Number(row.total_days ?? row.default_max ?? 0);
     const key = balanceKey(row.name, row.leave_type_id);
-    const usedDays = Number(Number(usedByType[key] ?? row.used_days ?? 0).toFixed(2));
+    const usedDays = roundLeaveDays(usedByType[key] ?? row.used_days ?? 0);
     const usageParts = usagePartsByType[key] ?? { used_day_units: usedDays, used_hours: 0 };
     const existing = grouped.get(key);
 
@@ -96,10 +100,10 @@ async function getBalancesByType(userId, year) {
   return Array.from(grouped.values())
     .map((balance) => ({
       ...balance,
-      used_days: Number(balance.used_days.toFixed(2)),
+      used_days: roundLeaveDays(balance.used_days),
       used_day_units: Number((balance.used_day_units ?? 0).toFixed(2)),
       used_hours: Number((balance.used_hours ?? 0).toFixed(2)),
-      remaining: Math.max(0, Number((balance.total_days - balance.used_days).toFixed(2))),
+      remaining: Math.max(0, roundLeaveDays(balance.total_days - balance.used_days)),
     }))
     .sort((a, b) => a.leave_type_id - b.leave_type_id);
 }
