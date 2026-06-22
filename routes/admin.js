@@ -951,8 +951,13 @@ router.get("/leave-pool/:user_id", async (req, res, next) => {
     bRows.forEach((b) => {
       const key = balanceKey(b.name, b.leave_type_id);
       const totalDays = Number(b.total_days ?? b.default_max);
-      const usedDays = Number(Number(usedByType[key] ?? b.used_days ?? 0).toFixed(6));
-      const usageParts = usagePartsByType[key] ?? { used_day_units: usedDays, used_hours: 0 };
+      const hasStoredBalance = b.used_days !== null && b.used_days !== undefined;
+      const usedDays = Number(Number(hasStoredBalance ? b.used_days : usedByType[key] ?? 0).toFixed(6));
+      const approvedUsedDays = Number(Number(usedByType[key] ?? 0).toFixed(6));
+      const storedUsageWasAdjusted = hasStoredBalance && Math.abs(usedDays - approvedUsedDays) > 0.000001;
+      const usageParts = storedUsageWasAdjusted
+        ? { used_day_units: 0, used_hours: 0 }
+        : usagePartsByType[key] ?? { used_day_units: usedDays, used_hours: 0 };
       const existing = balanceMap.get(key);
 
       if (!existing) {
@@ -969,9 +974,9 @@ router.get("/leave-pool/:user_id", async (req, res, next) => {
 
       existing.leave_type_id = Math.min(existing.leave_type_id, b.leave_type_id);
       existing.total_days = Math.max(existing.total_days, totalDays);
-      existing.used_days = usedByType[key] != null
-        ? existing.used_days
-        : Number((existing.used_days + usedDays).toFixed(6));
+      if (hasStoredBalance || usedByType[key] == null) {
+        existing.used_days = Number((existing.used_days + usedDays).toFixed(6));
+      }
       existing.used_day_units = Number(((existing.used_day_units ?? 0) + usageParts.used_day_units).toFixed(2));
       existing.used_hours = Number(((existing.used_hours ?? 0) + usageParts.used_hours).toFixed(2));
     });

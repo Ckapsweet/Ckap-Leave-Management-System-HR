@@ -74,8 +74,13 @@ async function getBalancesByType(userId, year) {
   rows.forEach((row) => {
     const totalDays = Number(row.total_days ?? row.default_max ?? 0);
     const key = balanceKey(row.name, row.leave_type_id);
-    const usedDays = roundLeaveDays(usedByType[key] ?? row.used_days ?? 0);
-    const usageParts = usagePartsByType[key] ?? { used_day_units: usedDays, used_hours: 0 };
+    const hasStoredBalance = row.used_days !== null && row.used_days !== undefined;
+    const usedDays = roundLeaveDays(hasStoredBalance ? row.used_days : usedByType[key] ?? 0);
+    const approvedUsedDays = roundLeaveDays(usedByType[key] ?? 0);
+    const storedUsageWasAdjusted = hasStoredBalance && Math.abs(usedDays - approvedUsedDays) > 0.000001;
+    const usageParts = storedUsageWasAdjusted
+      ? { used_day_units: 0, used_hours: 0 }
+      : usagePartsByType[key] ?? { used_day_units: usedDays, used_hours: 0 };
     const existing = grouped.get(key);
 
     if (!existing) {
@@ -92,7 +97,9 @@ async function getBalancesByType(userId, year) {
 
     existing.leave_type_id = Math.min(existing.leave_type_id, row.leave_type_id);
     existing.total_days = Math.max(existing.total_days, totalDays);
-    existing.used_days += usedDays;
+    if (hasStoredBalance || usedByType[key] == null) {
+      existing.used_days += usedDays;
+    }
     existing.used_day_units += usageParts.used_day_units;
     existing.used_hours += usageParts.used_hours;
   });
