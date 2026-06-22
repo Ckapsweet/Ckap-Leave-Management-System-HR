@@ -1001,7 +1001,7 @@ router.get("/leave-pool/:user_id", async (req, res, next) => {
 router.patch("/leave-pool/:user_id", csrfProtect, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const { balances, year } = req.body; // balances: [{ leave_type_id, total_days }]
+    const { balances, year } = req.body; // sick: used_days, other leave types: remaining_days
     const userId = req.params.user_id;
 
     if (!balances || !Array.isArray(balances) || balances.length === 0 || !year) {
@@ -1029,10 +1029,18 @@ router.patch("/leave-pool/:user_id", csrfProtect, async (req, res, next) => {
     const usedByType = new Map(existingRows.map((row) => [Number(row.leave_type_id), Number(row.used_days ?? 0)]));
     const balanceValues = balances.map((b) => {
       const leaveTypeId = Number(b.leave_type_id);
-      const totalDays = isUnlimitedSickLeave(leaveTypeNameById.get(leaveTypeId))
+      const isSickLeave = isUnlimitedSickLeave(leaveTypeNameById.get(leaveTypeId));
+      const currentUsed = usedByType.get(leaveTypeId) ?? 0;
+      const requestedRemaining = Number(b.remaining_days);
+      const requestedUsed = Number(b.used_days);
+      const used = isSickLeave && Number.isFinite(requestedUsed)
+        ? Math.max(0, Number(requestedUsed.toFixed(6)))
+        : currentUsed;
+      const totalDays = isSickLeave
         ? 0
-        : Number(Number(b.total_days).toFixed(6));
-      const used = usedByType.get(leaveTypeId) ?? 0;
+        : Number.isFinite(requestedRemaining)
+          ? Number((used + Math.max(0, requestedRemaining)).toFixed(6))
+          : Number(Number(b.total_days).toFixed(6));
       totalGlobalDays += totalDays;
       totalGlobalUsed += used;
       return [userId, leaveTypeId, totalDays, used, year];
@@ -1041,7 +1049,7 @@ router.patch("/leave-pool/:user_id", csrfProtect, async (req, res, next) => {
     await conn.query(
       `INSERT INTO leave_balances (user_id, leave_type_id, total_days, used_days, year)
        VALUES ?
-       ON DUPLICATE KEY UPDATE total_days = VALUES(total_days)`,
+       ON DUPLICATE KEY UPDATE total_days = VALUES(total_days), used_days = VALUES(used_days)`,
       [balanceValues]
     );
 
@@ -1049,8 +1057,8 @@ router.patch("/leave-pool/:user_id", csrfProtect, async (req, res, next) => {
     await conn.query(
       `INSERT INTO user_leave_pool (user_id, total_days, used_days, year)
        VALUES (?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE total_days = ?`,
-      [userId, totalGlobalDays, totalGlobalUsed, year, totalGlobalDays]
+       ON DUPLICATE KEY UPDATE total_days = VALUES(total_days), used_days = VALUES(used_days)`,
+      [userId, totalGlobalDays, totalGlobalUsed, year]
     );
 
     await conn.commit();
