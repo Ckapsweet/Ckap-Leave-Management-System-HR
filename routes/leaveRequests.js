@@ -7,7 +7,7 @@ import { authenticate, csrfProtect } from "../middleware/auth.js";
 import { logAudit } from "../middleware/audit.js";
 import { leaveAttachmentDir, normalizeOriginalName, uploadLeaveAttachments } from "../middleware/upload.js";
 import { notifyLeaveRequestCreated, notifyLeaveRequestSubmitted } from "../services/mailService.js";
-import { calculateLeaveHours, leaveHoursToDays } from "../services/leaveTime.js";
+import { calculateLeaveHours, isUnlimitedSickLeave, leaveHoursToDays } from "../services/leaveTime.js";
 import { mapLeaveRequestRow } from "../services/leaveRequestHelpers.js";
 
 const router = Router();
@@ -369,6 +369,7 @@ router.post("/", authenticate, csrfProtect, uploadLeaveAttachments.array("attach
       "SELECT * FROM leave_types WHERE id = ? LIMIT 1", [leave_type_id]
     );
     if (!types[0]) return res.status(400).json({ message: "ประเภทการลาไม่ถูกต้อง" });
+    const isSickLeave = isUnlimitedSickLeave(types[0].name);
 
     const isHour = !!start_time;
     const totalHoursToSave = isHour ? calculateLeaveHours(start_time, end_time) : null;
@@ -390,11 +391,11 @@ router.post("/", authenticate, csrfProtect, uploadLeaveAttachments.array("attach
     let currentBalance = balRows[0];
 
     // ถ้ายังไม่มี row ใน leave_balances → ใช้ค่า default จาก leave_types
-    const maxAllowed = currentBalance ? parseFloat(currentBalance.total_days) : parseFloat(types[0].max_days);
+    const maxAllowed = isSickLeave ? 0 : currentBalance ? parseFloat(currentBalance.total_days) : parseFloat(types[0].max_days);
     const used = currentBalance ? parseFloat(currentBalance.used_days) : 0;
     const remaining = maxAllowed - used;
 
-    if (remaining < totalDaysToSave) {
+    if (!isSickLeave && remaining < totalDaysToSave) {
       return res.status(400).json({
         message: `วันลา${types[0].name}คงเหลือไม่เพียงพอ (คงเหลือ ${remaining} วัน ต้องการ ${totalDaysToSave} วัน)`,
       });
