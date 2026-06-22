@@ -7,7 +7,7 @@ import { authenticate, requireAdmin, csrfProtect } from "../middleware/auth.js";
 import { logAudit } from "../middleware/audit.js";
 import { leaveAttachmentDir, normalizeOriginalName, uploadLeaveAttachments } from "../middleware/upload.js";
 import { notifyLeaveRequestForwarded, notifyLeaveRequestResolved } from "../services/mailService.js";
-import { calculateLeaveHours, leaveHoursToDays } from "../services/leaveTime.js";
+import { calculateLeaveHours, isUnlimitedSickLeave, leaveHoursToDays } from "../services/leaveTime.js";
 import {
   approveWorkflowRequest,
   canActOnWorkflow,
@@ -1018,6 +1018,8 @@ router.patch("/leave-pool/:user_id", csrfProtect, async (req, res, next) => {
     let totalGlobalUsed = 0;
 
     const leaveTypeIds = balances.map((b) => Number(b.leave_type_id));
+    const [leaveTypeRows] = await conn.query("SELECT id, name FROM leave_types WHERE id IN (?)", [leaveTypeIds]);
+    const leaveTypeNameById = new Map(leaveTypeRows.map((row) => [Number(row.id), row.name]));
     const [existingRows] = await conn.query(
       `SELECT leave_type_id, used_days
        FROM leave_balances
@@ -1027,7 +1029,9 @@ router.patch("/leave-pool/:user_id", csrfProtect, async (req, res, next) => {
     const usedByType = new Map(existingRows.map((row) => [Number(row.leave_type_id), Number(row.used_days ?? 0)]));
     const balanceValues = balances.map((b) => {
       const leaveTypeId = Number(b.leave_type_id);
-      const totalDays = Number(Number(b.total_days).toFixed(6));
+      const totalDays = isUnlimitedSickLeave(leaveTypeNameById.get(leaveTypeId))
+        ? 0
+        : Number(Number(b.total_days).toFixed(6));
       const used = usedByType.get(leaveTypeId) ?? 0;
       totalGlobalDays += totalDays;
       totalGlobalUsed += used;
