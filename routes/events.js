@@ -166,6 +166,16 @@ async function mapMyEvents(rows, userId) {
   }));
 }
 
+function isActiveMyEvent(event, now = Date.now()) {
+  const endDate = toIsoDate(event.end_date);
+  if (!isValidDate(endDate)) return true;
+  const finalDay = event.attendance_days?.find((day) => toIsoDate(day.event_date) === endDate);
+  const rawEndTime = String(finalDay?.check_out_time ?? "23:59:59").slice(0, 8);
+  const endTime = /^\d{2}:\d{2}$/.test(rawEndTime) ? `${rawEndTime}:00` : rawEndTime;
+  const expiresAt = Date.parse(`${endDate}T${endTime}+07:00`);
+  return !Number.isFinite(expiresAt) || now <= expiresAt;
+}
+
 function evidenceUrl(id) {
   return `/api/events/evidence/${id}`;
 }
@@ -255,7 +265,8 @@ router.get("/my", async (req, res, next) => {
        ORDER BY e.start_date DESC, e.id DESC`,
       [req.user.id, req.user.id]
     );
-    res.json(await mapMyEvents(rows, req.user.id));
+    const events = await mapMyEvents(rows, req.user.id);
+    res.json(events.filter((event) => isActiveMyEvent(event)));
   } catch (err) {
     next(err);
   }
