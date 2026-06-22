@@ -32,5 +32,5 @@ export function calculateLeaveHours(startTime, endTime) {
 export function leaveHoursToDays(hours) {
   const parsed = Number(hours ?? 0);
   if (!Number.isFinite(parsed)) return 0;
-  return round(parsed / WORK_HOURS_PER_DAY, 2);
+  return round(parsed / WORK_HOURS_PER_DAY, 6);
 }
