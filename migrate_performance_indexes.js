@@ -33,7 +33,7 @@ async function dedupeLeaveBalances(conn) {
       leave_type_id,
       year,
       MAX(total_days) AS total_days,
-      SUM(used_days) AS used_days
+      MAX(used_days) AS used_days
     FROM leave_balances
     GROUP BY user_id, leave_type_id, year
   `);
