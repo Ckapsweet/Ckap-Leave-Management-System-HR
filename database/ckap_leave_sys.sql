@@ -260,7 +260,7 @@ CREATE TABLE `leave_requests` (
   `start_time` time DEFAULT NULL,
   `end_time` time DEFAULT NULL,
   `total_days` decimal(5,2) DEFAULT NULL,
-  `request_type` enum('leave','late') NOT NULL DEFAULT 'leave',
+  `request_type` enum('leave','late','offsite') NOT NULL DEFAULT 'leave',
   `reason` text DEFAULT NULL,
   `status` enum('pending','approved','rejected') DEFAULT 'pending',
   `current_assignee_id` int(11) DEFAULT NULL,

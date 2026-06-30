@@ -47,6 +47,7 @@ async function getBalancesByType(userId, year) {
            FROM leave_requests lr
            JOIN leave_types lt ON lt.id = lr.leave_type_id
            WHERE lr.user_id = ? AND lr.status = 'approved'
+             AND lr.request_type <> 'offsite'
              AND lr.start_date >= ? AND lr.start_date < ?`,
           [userId, ...range]
         )

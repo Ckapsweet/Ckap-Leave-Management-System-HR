@@ -9,6 +9,7 @@
     "migrate:leave-balance-decimal": "node migrate_leave_balance_decimal.js",
     "migrate:unlimited-sick-leave": "node migrate_unlimited_sick_leave.js",
     "migrate:events": "node migrate_events.js",
+    "migrate:offsite-request-type": "node migrate_offsite_request_type.js",
     "migrate:performance": "node migrate_performance_indexes.js",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js"
   },
