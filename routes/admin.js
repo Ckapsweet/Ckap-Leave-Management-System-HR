@@ -18,6 +18,7 @@ import { mapLeaveRequestRow } from "../services/leaveRequestHelpers.js";
 
 const router = Router();
 router.use(authenticate, requireAdmin);
+const OFFSITE_REQUEST_TYPE = "offsite";
 
 const latestLeaveApprovalJoin = `
       LEFT JOIN (
@@ -176,6 +177,7 @@ router.post("/leave-requests", csrfProtect, uploadLeaveAttachments.array("attach
     );
     if (!types[0]) return res.status(400).json({ message: "ประเภทการลาไม่ถูกต้อง" });
 
+    const isOffsiteRequest = request_type === OFFSITE_REQUEST_TYPE;
     const isHour = Boolean(start_time);
     const totalHours = isHour ? calculateLeaveHours(start_time, end_time) : null;
     if (isHour && (!end_time || totalHours <= 0)) {
@@ -196,7 +198,7 @@ router.post("/leave-requests", csrfProtect, uploadLeaveAttachments.array("attach
         : Math.max(1, Math.ceil((end.getTime() - start.getTime()) / 86_400_000) + 1);
     const year = start.getFullYear();
 
-    if (!isHour) {
+    if (!isOffsiteRequest && !isHour) {
       const [overlap] = await conn.query(
         `SELECT id FROM leave_requests
          WHERE user_id = ? AND status = 'approved'
@@ -241,21 +243,23 @@ router.post("/leave-requests", csrfProtect, uploadLeaveAttachments.array("attach
       [result.insertId, req.user.id, "บันทึกประวัติย้อนหลังโดยผู้ดูแล", approvedAt]
     );
 
-    await conn.query(
-      `INSERT INTO leave_balances (user_id, leave_type_id, total_days, used_days, year)
-       SELECT ?, ?, max_days, ?, ? FROM leave_types WHERE id = ?
-       ON DUPLICATE KEY UPDATE used_days = used_days + ?`,
-      [user_id, leave_type_id, totalDaysToSave, year, leave_type_id, totalDaysToSave]
-    );
+    if (!isOffsiteRequest) {
+      await conn.query(
+        `INSERT INTO leave_balances (user_id, leave_type_id, total_days, used_days, year)
+         SELECT ?, ?, max_days, ?, ? FROM leave_types WHERE id = ?
+         ON DUPLICATE KEY UPDATE used_days = used_days + ?`,
+        [user_id, leave_type_id, totalDaysToSave, year, leave_type_id, totalDaysToSave]
+      );
 
-    await conn.query(
-      `INSERT INTO user_leave_pool (user_id, total_days, used_days, year)
-       SELECT ?, COALESCE(SUM(total_days), 0), COALESCE(SUM(used_days), 0), ?
-       FROM leave_balances
-       WHERE user_id = ? AND year = ?
-       ON DUPLICATE KEY UPDATE total_days = VALUES(total_days), used_days = VALUES(used_days)`,
-      [user_id, year, user_id, year]
-    );
+      await conn.query(
+        `INSERT INTO user_leave_pool (user_id, total_days, used_days, year)
+         SELECT ?, COALESCE(SUM(total_days), 0), COALESCE(SUM(used_days), 0), ?
+         FROM leave_balances
+         WHERE user_id = ? AND year = ?
+         ON DUPLICATE KEY UPDATE total_days = VALUES(total_days), used_days = VALUES(used_days)`,
+        [user_id, year, user_id, year]
+      );
+    }
 
     await logAudit({
       req,
@@ -379,8 +383,9 @@ router.patch("/leave-requests/:id", csrfProtect, async (req, res, next) => {
         : Math.max(1, Math.ceil((end.getTime() - start.getTime()) / 86_400_000) + 1);
     const newYear = start.getFullYear();
     const oldYear = new Date(beforeRow.start_date).getFullYear();
+    const isOffsiteRequest = request_type === OFFSITE_REQUEST_TYPE;
 
-    if (!isHour) {
+    if (!isOffsiteRequest && !isHour) {
       const [overlap] = await conn.query(
         `SELECT id FROM leave_requests
          WHERE id <> ?
@@ -412,20 +417,24 @@ router.patch("/leave-requests/:id", csrfProtect, async (req, res, next) => {
       [user_id, leave_type_id, start_date, end_date, isHour ? start_time : null, isHour ? end_time : null, totalDaysToSave, request_type, reason, req.params.id]
     );
 
-    if (beforeRow.status === "approved") {
-      await conn.query(
-        `UPDATE leave_balances
-         SET used_days = GREATEST(used_days - ?, 0)
-         WHERE user_id = ? AND leave_type_id = ? AND year = ?`,
-        [Number(beforeRow.total_days ?? 0), beforeRow.user_id, beforeRow.leave_type_id, oldYear]
-      );
+    if (beforeRow.status === "approved" && (beforeRow.request_type !== OFFSITE_REQUEST_TYPE || !isOffsiteRequest)) {
+      if (beforeRow.request_type !== OFFSITE_REQUEST_TYPE) {
+        await conn.query(
+          `UPDATE leave_balances
+           SET used_days = GREATEST(used_days - ?, 0)
+           WHERE user_id = ? AND leave_type_id = ? AND year = ?`,
+          [Number(beforeRow.total_days ?? 0), beforeRow.user_id, beforeRow.leave_type_id, oldYear]
+        );
+      }
 
-      await conn.query(
-        `INSERT INTO leave_balances (user_id, leave_type_id, total_days, used_days, year)
-         SELECT ?, ?, max_days, ?, ? FROM leave_types WHERE id = ?
-         ON DUPLICATE KEY UPDATE used_days = used_days + ?`,
-        [user_id, leave_type_id, totalDaysToSave, newYear, leave_type_id, totalDaysToSave]
-      );
+      if (!isOffsiteRequest) {
+        await conn.query(
+          `INSERT INTO leave_balances (user_id, leave_type_id, total_days, used_days, year)
+           SELECT ?, ?, max_days, ?, ? FROM leave_types WHERE id = ?
+           ON DUPLICATE KEY UPDATE used_days = used_days + ?`,
+          [user_id, leave_type_id, totalDaysToSave, newYear, leave_type_id, totalDaysToSave]
+        );
+      }
 
       const syncPairs = new Set([
         `${beforeRow.user_id}:${oldYear}`,
@@ -530,7 +539,7 @@ router.delete("/leave-requests/:id", csrfProtect, async (req, res, next) => {
 
     await conn.beginTransaction();
 
-    if (requestRow.status === "approved") {
+    if (requestRow.status === "approved" && requestRow.request_type !== OFFSITE_REQUEST_TYPE) {
       const year = new Date(requestRow.start_date).getFullYear();
       const daysToRestore = Number(requestRow.total_days ?? 0);
 
@@ -638,6 +647,7 @@ router.patch("/leave-requests/:id/approve", csrfProtect, async (req, res, next) 
       comment,
       targetRow: rows[0],
       onFinalApprove: async () => {
+        if (rows[0].request_type === OFFSITE_REQUEST_TYPE) return;
         const year = new Date(rows[0].start_date).getFullYear();
         const leaveTypeId = rows[0].leave_type_id;
 
@@ -920,6 +930,7 @@ router.get("/leave-pool/:user_id", async (req, res, next) => {
        FROM leave_requests lr
        JOIN leave_types lt ON lt.id = lr.leave_type_id
        WHERE lr.user_id = ? AND lr.status = 'approved'
+         AND lr.request_type <> 'offsite'
          AND lr.start_date >= ? AND lr.start_date < ?`,
       [userId, ...range]
     );
@@ -1335,7 +1346,7 @@ router.get("/reports/dashboard-stats", async (req, res, next) => {
       pool.query(
         `SELECT start_time, end_time, total_days
          FROM leave_requests
-         WHERE status = 'approved' AND start_date >= ? AND start_date < ?`,
+         WHERE status = 'approved' AND request_type <> 'offsite' AND start_date >= ? AND start_date < ?`,
         currentYearRange
       ),
     ]);
@@ -1349,6 +1360,7 @@ router.get("/reports/dashboard-stats", async (req, res, next) => {
        FROM leave_requests lr
        JOIN users u ON lr.user_id = u.id
        WHERE lr.start_date >= ? AND lr.start_date < ?
+         AND lr.request_type <> 'offsite'
        GROUP BY u.department
        ORDER BY value DESC`,
       currentYearRange
@@ -1359,6 +1371,7 @@ router.get("/reports/dashboard-stats", async (req, res, next) => {
       `SELECT MONTH(start_date) AS m, COUNT(*) AS cnt
        FROM leave_requests
        WHERE start_date >= ? AND start_date < ?
+         AND request_type <> 'offsite'
        GROUP BY MONTH(start_date)
        ORDER BY m`,
       currentYearRange
@@ -1368,7 +1381,7 @@ router.get("/reports/dashboard-stats", async (req, res, next) => {
        FROM leave_requests lr
        JOIN users u ON lr.user_id = u.id
        JOIN leave_types lt ON lr.leave_type_id = lt.id
-       WHERE lr.status = 'approved' AND lr.start_date >= ? AND lr.start_date < ?
+       WHERE lr.status = 'approved' AND lr.request_type <> 'offsite' AND lr.start_date >= ? AND lr.start_date < ?
        ORDER BY u.department ASC`,
       currentYearRange
     );
@@ -1414,7 +1427,7 @@ router.get("/reports/leave-summary", async (req, res, next) => {
       FROM leave_requests lr
       JOIN users u ON lr.user_id = u.id
       JOIN leave_types lt ON lr.leave_type_id = lt.id
-      WHERE lr.status = 'approved' AND lr.start_date >= ? AND lr.start_date < ?
+      WHERE lr.status = 'approved' AND lr.request_type <> 'offsite' AND lr.start_date >= ? AND lr.start_date < ?
       ORDER BY u.department ASC
     `;
     const [rows] = await pool.query(sql, currentYearRange);

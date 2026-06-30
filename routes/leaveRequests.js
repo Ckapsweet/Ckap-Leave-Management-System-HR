@@ -11,6 +11,7 @@ import { calculateLeaveHours, isUnlimitedSickLeave, leaveHoursToDays } from "../
 import { mapLeaveRequestRow } from "../services/leaveRequestHelpers.js";
 
 const router = Router();
+const OFFSITE_REQUEST_TYPE = "offsite";
 
 const latestLeaveApprovalJoin = `
        LEFT JOIN (
@@ -250,6 +251,7 @@ router.get("/report/monthly", authenticate, async (req, res, next) => {
          AND lr.start_date >= ?
          AND lr.start_date < ?
          AND lr.status = 'approved'
+         AND lr.request_type <> 'offsite'
        GROUP BY MONTH(start_date), lt.id
        ORDER BY month ASC`,
       [req.user.id, ...range]
@@ -283,6 +285,7 @@ router.get("/report/yearly", authenticate, async (req, res, next) => {
        JOIN leave_types lt ON lr.leave_type_id = lt.id
        WHERE lr.user_id = ?
          AND lr.status = 'approved'
+         AND lr.request_type <> 'offsite'
        GROUP BY YEAR(start_date), lt.id
        ORDER BY year DESC`,
       [req.user.id]
@@ -365,6 +368,8 @@ router.post("/", authenticate, csrfProtect, uploadLeaveAttachments.array("attach
       return res.status(400).json({ message: "กรุณากรอกข้อมูลให้ครบถ้วน" });
     }
 
+    const isOffsiteRequest = request_type === OFFSITE_REQUEST_TYPE;
+
     const [types] = await conn.query(
       "SELECT * FROM leave_types WHERE id = ? LIMIT 1", [leave_type_id]
     );
@@ -382,7 +387,7 @@ router.post("/", authenticate, csrfProtect, uploadLeaveAttachments.array("attach
 
     const year = new Date(start_date).getFullYear();
 
-    const [balRows] = await conn.query(
+    const [balRows] = isOffsiteRequest ? [[]] : await conn.query(
       `SELECT * FROM leave_balances
        WHERE user_id = ? AND leave_type_id = ? AND year = ?
        LIMIT 1`,
@@ -395,13 +400,13 @@ router.post("/", authenticate, csrfProtect, uploadLeaveAttachments.array("attach
     const used = currentBalance ? parseFloat(currentBalance.used_days) : 0;
     const remaining = maxAllowed - used;
 
-    if (!isSickLeave && remaining < totalDaysToSave) {
+    if (!isOffsiteRequest && !isSickLeave && remaining < totalDaysToSave) {
       return res.status(400).json({
         message: `วันลา${types[0].name}คงเหลือไม่เพียงพอ (คงเหลือ ${remaining} วัน ต้องการ ${totalDaysToSave} วัน)`,
       });
     }
 
-    if (!isHour) {
+    if (!isOffsiteRequest && !isHour) {
       const [overlap] = await conn.query(
         `SELECT id FROM leave_requests
          WHERE user_id = ? AND status = 'approved'
@@ -416,7 +421,7 @@ router.post("/", authenticate, csrfProtect, uploadLeaveAttachments.array("attach
 
     await conn.beginTransaction();
 
-    const isAutoApprove = req.user.role === "manager";
+    const isAutoApprove = req.user.role === "manager" || isOffsiteRequest;
     const finalStatus = isAutoApprove ? "approved" : "pending";
     const approvedBy = isAutoApprove ? req.user.id : null;
     const approvedAt = isAutoApprove ? new Date() : null;
@@ -450,7 +455,15 @@ router.post("/", authenticate, csrfProtect, uploadLeaveAttachments.array("attach
       );
     }
 
-    if (isAutoApprove) {
+    if (isAutoApprove && isOffsiteRequest) {
+      await conn.query(
+        `INSERT INTO leave_approvals (leave_request_id, approver_id, status, comment, approved_at)
+         VALUES (?, ?, 'approved', ?, ?)`,
+        [result.insertId, req.user.id, "แจ้งทำงานนอกสถานที่", approvedAt]
+      );
+    }
+
+    if (isAutoApprove && !isOffsiteRequest) {
       await conn.query(
         `INSERT INTO leave_approvals (leave_request_id, approver_id, status, comment, approved_at)
          VALUES (?, ?, 'approved', 'อนุมัติอัตโนมัติ (สิทธิ์ Manager)', ?)`,

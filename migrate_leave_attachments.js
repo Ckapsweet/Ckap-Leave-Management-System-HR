@@ -29,7 +29,7 @@ async function tableExists(tableName) {
 async function main() {
   if (!(await columnExists("leave_requests", "request_type"))) {
     await pool.query(
-      "ALTER TABLE leave_requests ADD COLUMN request_type ENUM('leave','late') NOT NULL DEFAULT 'leave' AFTER total_days"
+      "ALTER TABLE leave_requests ADD COLUMN request_type ENUM('leave','late','offsite') NOT NULL DEFAULT 'leave' AFTER total_days"
     );
     console.log("Added leave_requests.request_type");
   }
