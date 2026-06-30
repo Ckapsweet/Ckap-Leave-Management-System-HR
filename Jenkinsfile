@@ -55,6 +55,7 @@ pipeline {
                     npm run migrate:hr-role
                     npm run migrate:leave-balance-decimal
                     npm run migrate:unlimited-sick-leave
+                    npm run migrate:offsite-request-type
                     npm run migrate:performance
                     '''
                 }
