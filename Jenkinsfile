@@ -46,17 +46,32 @@ pipeline {
             }
         }
 
-        stage('Install Packages Dependencies') {
+        stage('Install Dependencies') {
             steps {
                 configFileProvider([configFile(fileId: 'ckap-backend-env', targetLocation: "${APP_DIR}/.env")]) {
                     sh '''
                     cd /home/adminis/backend
-                    npm install
-                    npm run migrate:hr-role
-                    npm run migrate:leave-balance-decimal
-                    npm run migrate:unlimited-sick-leave
-                    npm run migrate:offsite-request-type
-                    npm run migrate:performance
+                    npm ci
+                    '''
+                }
+            }
+        }
+
+        stage('Run Tests') {
+            steps {
+                sh '''
+                cd /home/adminis/backend
+                npm test
+                '''
+            }
+        }
+
+        stage('Run Database Migrations') {
+            steps {
+                configFileProvider([configFile(fileId: 'ckap-backend-env', targetLocation: "${APP_DIR}/.env")]) {
+                    sh '''
+                    cd /home/adminis/backend
+                    npm run migrate
                     '''
                 }
             }

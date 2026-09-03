@@ -12,6 +12,11 @@
     "migrate:offsite-request-type": "node migrate_offsite_request_type.js",
     "migrate:performance": "node migrate_performance_indexes.js",
     "migrate:user-english-name": "node migrate_user_english_name.js",
+    "migrate:user-contact-fields": "node migrate_user_contact_fields.js",
+    "migrate:soft-delete-users": "node migrate_soft_delete_users.js",
+    "migrate:departments": "node migrate_departments.js",
+    "migrate:leave-attachments": "node migrate_leave_attachments.js",
+    "migrate": "npm run migrate:user-contact-fields && npm run migrate:user-english-name && npm run migrate:soft-delete-users && npm run migrate:departments && npm run migrate:hr-role && npm run migrate:leave-balance-decimal && npm run migrate:leave-attachments && npm run migrate:offsite-request-type && npm run migrate:unlimited-sick-leave && npm run migrate:events && npm run migrate:performance",
     "test": "vitest run"
   },
   "dependencies": {
