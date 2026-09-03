@@ -40,6 +40,7 @@ export function mapLeaveRequestRow(row, { includeUser = false } = {}) {
     mapped.user = {
       id: row.user_id,
       full_name: row.user_full_name,
+      english_name: row.user_english_name ?? null,
       employee_code: row.employee_code,
       department: row.department,
       role: row.user_role,

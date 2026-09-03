@@ -10,7 +10,7 @@ export async function authenticate(req, res, next) {
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     const [rows] = await pool.query(
-      `SELECT id, employee_code, full_name, department, role, supervisor_id, email, email_2, phone
+      `SELECT id, employee_code, full_name, english_name, department, role, supervisor_id, email, email_2, phone
        FROM users
        WHERE id = ? AND is_active = 1
        LIMIT 1`,

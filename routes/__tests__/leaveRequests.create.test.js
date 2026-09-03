@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, it, jest } from "@jest/globals";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import express from "express";
 import request from "supertest";
 
@@ -14,29 +14,29 @@ const mockUser = {
 };
 
 const conn = {
-  query: jest.fn(),
-  beginTransaction: jest.fn(),
-  commit: jest.fn(),
-  rollback: jest.fn(),
-  release: jest.fn(),
+  query: vi.fn(),
+  beginTransaction: vi.fn(),
+  commit: vi.fn(),
+  rollback: vi.fn(),
+  release: vi.fn(),
 };
 
 const pool = {
-  getConnection: jest.fn(),
-  query: jest.fn(),
+  getConnection: vi.fn(),
+  query: vi.fn(),
 };
 
-const logAudit = jest.fn();
-const notifyLeaveRequestSubmitted = jest.fn();
-const notifyLeaveRequestCreated = jest.fn();
-const notifyLeaveRequestForwarded = jest.fn();
-const notifyLeaveRequestResolved = jest.fn();
+const logAudit = vi.fn();
+const notifyLeaveRequestSubmitted = vi.fn();
+const notifyLeaveRequestCreated = vi.fn();
+const notifyLeaveRequestForwarded = vi.fn();
+const notifyLeaveRequestResolved = vi.fn();
 
-jest.unstable_mockModule("../../config/db.js", () => ({
+vi.doMock("../../config/db.js", () => ({
   default: pool,
 }));
 
-jest.unstable_mockModule("../../middleware/auth.js", () => ({
+vi.doMock("../../middleware/auth.js", () => ({
   authenticate: (req, _res, next) => {
     req.user = mockUser;
     next();
@@ -45,11 +45,11 @@ jest.unstable_mockModule("../../middleware/auth.js", () => ({
   csrfProtect: (_req, _res, next) => next(),
 }));
 
-jest.unstable_mockModule("../../middleware/audit.js", () => ({
+vi.doMock("../../middleware/audit.js", () => ({
   logAudit,
 }));
 
-jest.unstable_mockModule("../../middleware/upload.js", () => ({
+vi.doMock("../../middleware/upload.js", () => ({
   leaveAttachmentDir: "/tmp/leave-attachments",
   normalizeOriginalName: (name) => name,
   uploadLeaveAttachments: {
@@ -57,7 +57,7 @@ jest.unstable_mockModule("../../middleware/upload.js", () => ({
   },
 }));
 
-jest.unstable_mockModule("../../services/mailService.js", () => ({
+vi.doMock("../../services/mailService.js", () => ({
   notifyLeaveRequestSubmitted,
   notifyLeaveRequestCreated,
   notifyLeaveRequestForwarded,
@@ -320,7 +320,7 @@ beforeEach(() => {
     email: "user@example.com",
     email_2: null,
   });
-  jest.clearAllMocks();
+  vi.clearAllMocks();
   pool.getConnection.mockResolvedValue(conn);
   conn.beginTransaction.mockResolvedValue();
   conn.commit.mockResolvedValue();
@@ -936,7 +936,7 @@ describe("POST /api/leave-requests - manager auto approve", () => {
 describe("POST /api/leave-requests - notifications", () => {
   it("responds successfully even when background mail fails", async () => {
     const mailError = new Error("SMTP down");
-    const consoleSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     notifyLeaveRequestSubmitted.mockRejectedValueOnce(mailError);
 
     await request(app)

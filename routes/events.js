@@ -72,7 +72,7 @@ async function mapEvents(rows) {
   const ids = rows.map((row) => row.id);
   const [leads] = await pool.query(
     `SELECT el.event_id,
-            u.id, u.employee_code, u.full_name, u.department, u.role, u.supervisor_id
+            u.id, u.employee_code, u.full_name, u.english_name, u.department, u.role, u.supervisor_id
      FROM event_leads el
      JOIN users u ON u.id = el.lead_id
      WHERE el.event_id IN (?)
@@ -81,7 +81,7 @@ async function mapEvents(rows) {
   );
   const [participants] = await pool.query(
     `SELECT ep.event_id, ep.selected_by_lead_id, ep.selected_at,
-            u.id, u.employee_code, u.full_name, u.department, u.role, u.supervisor_id,
+            u.id, u.employee_code, u.full_name, u.english_name, u.department, u.role, u.supervisor_id,
             selected_lead.full_name AS selected_by_lead_name
      FROM event_participants ep
      JOIN users u ON u.id = ep.user_id
@@ -103,6 +103,7 @@ async function mapEvents(rows) {
       id: lead.id,
       employee_code: lead.employee_code,
       full_name: lead.full_name,
+      english_name: lead.english_name,
       department: lead.department,
       role: lead.role,
       supervisor_id: lead.supervisor_id,
@@ -115,6 +116,7 @@ async function mapEvents(rows) {
       id: participant.id,
       employee_code: participant.employee_code,
       full_name: participant.full_name,
+      english_name: participant.english_name,
       department: participant.department,
       role: participant.role,
       supervisor_id: participant.supervisor_id,
@@ -325,7 +327,7 @@ router.get("/leads", async (req, res, next) => {
     }
 
     const [rows] = await pool.query(
-      `SELECT id, employee_code, full_name, department, role, supervisor_id, email, email_2, phone
+      `SELECT id, employee_code, full_name, english_name, department, role, supervisor_id, email, email_2, phone
        FROM users
        WHERE ${where.join(" AND ")}
        ORDER BY full_name ASC`,
@@ -364,7 +366,7 @@ router.post("/", csrfProtect, async (req, res, next) => {
     }
 
     const [leadRows] = await conn.query(
-      `SELECT id, full_name, employee_code, department, role, supervisor_id
+      `SELECT id, full_name, english_name, employee_code, department, role, supervisor_id
        FROM users
        WHERE id IN (?) AND role <> 'admin' AND is_active = 1`,
       [leadIds]
@@ -463,7 +465,7 @@ router.get("/:id/team", async (req, res, next) => {
 
     if (req.user.role === "lead") {
       const [rows] = await pool.query(
-        `SELECT u.id, u.employee_code, u.full_name, u.department, u.role, u.supervisor_id,
+        `SELECT u.id, u.employee_code, u.full_name, u.english_name, u.department, u.role, u.supervisor_id,
                 u.email, u.email_2, u.phone,
                 event_lead.id AS lead_id, event_lead.full_name AS lead_name
          FROM event_leads el
@@ -484,7 +486,7 @@ router.get("/:id/team", async (req, res, next) => {
     }
 
     const [rows] = await pool.query(
-      `SELECT id, employee_code, full_name, department, role, supervisor_id, email, email_2, phone
+      `SELECT id, employee_code, full_name, english_name, department, role, supervisor_id, email, email_2, phone
        FROM users
        WHERE ${teamWhere.join(" AND ")}
        ORDER BY id ASC`,
@@ -512,6 +514,7 @@ router.get("/:id/attendance", async (req, res, next) => {
     const [logs] = await pool.query(
       `SELECT etl.*,
               COALESCE(u.full_name, eep.full_name) AS full_name,
+              u.english_name,
               u.employee_code,
               COALESCE(u.department, eep.department) AS department,
               approver.full_name AS approver_name
@@ -807,7 +810,7 @@ router.post("/:id/attendance/manual", csrfProtect, async (req, res, next) => {
       }
 
       [[participant]] = await conn.query(
-        `SELECT u.id, u.full_name, u.employee_code, u.department
+        `SELECT u.id, u.full_name, u.english_name, u.employee_code, u.department
          FROM event_participants ep
          JOIN users u ON u.id = ep.user_id
          WHERE ${participantWhere.join(" AND ")}
@@ -872,6 +875,7 @@ router.post("/:id/attendance/manual", csrfProtect, async (req, res, next) => {
     const [[log]] = await conn.query(
       `SELECT etl.*,
               COALESCE(u.full_name, eep.full_name) AS full_name,
+              u.english_name,
               u.employee_code,
               COALESCE(u.department, eep.department) AS department,
               approver.full_name AS approver_name
@@ -1080,7 +1084,7 @@ router.patch("/attendance/:logId/:action", csrfProtect, async (req, res, next) =
     });
     await conn.commit();
     const [[updated]] = await pool.query(
-      `SELECT etl.*, u.full_name, u.employee_code, u.department, approver.full_name AS approver_name
+      `SELECT etl.*, u.full_name, u.english_name, u.employee_code, u.department, approver.full_name AS approver_name
        FROM event_time_logs etl
        JOIN users u ON u.id = etl.user_id
        LEFT JOIN users approver ON approver.id = etl.approved_by

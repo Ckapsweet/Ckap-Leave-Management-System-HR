@@ -15,6 +15,7 @@ function toPublicUser(user) {
     id: user.id,
     employee_code: user.employee_code,
     full_name: user.full_name,
+    english_name: user.english_name ?? null,
     department: user.department,
     role: user.role,
     supervisor_id: user.supervisor_id ?? null,
@@ -103,7 +104,7 @@ router.post("/logout", (req, res) => {
 router.get("/me", authenticate, async (req, res, next) => {
   try {
     const [rows] = await pool.query(
-      "SELECT id, employee_code, full_name, department, role, supervisor_id, email, email_2, phone FROM users WHERE id = ? AND is_active = 1 LIMIT 1",
+      "SELECT id, employee_code, full_name, english_name, department, role, supervisor_id, email, email_2, phone FROM users WHERE id = ? AND is_active = 1 LIMIT 1",
       [req.user.id]
     );
     if (!rows[0]) return res.status(404).json({ message: "ไม่พบผู้ใช้งาน" });
@@ -117,6 +118,8 @@ router.get("/me", authenticate, async (req, res, next) => {
 router.put("/profile", authenticate, csrfProtect, async (req, res, next) => {
   try {
     const fullName = typeof req.body.full_name === "string" ? req.body.full_name.trim() : "";
+    const shouldUpdateEnglishName = Object.prototype.hasOwnProperty.call(req.body, "english_name");
+    const englishName = shouldUpdateEnglishName ? cleanOptional(req.body.english_name) : undefined;
     const email = cleanOptional(req.body.email);
     const email2 = cleanOptional(req.body.email_2);
     const phone = cleanOptional(req.body.phone);
@@ -126,13 +129,20 @@ router.put("/profile", authenticate, csrfProtect, async (req, res, next) => {
       return res.status(400).json({ message: "รูปแบบอีเมลไม่ถูกต้อง" });
     }
 
-    await pool.query(
-      "UPDATE users SET full_name = ?, email = ?, email_2 = ?, phone = ? WHERE id = ?",
-      [fullName, email, email2, phone, req.user.id]
-    );
+    if (shouldUpdateEnglishName) {
+      await pool.query(
+        "UPDATE users SET full_name = ?, english_name = ?, email = ?, email_2 = ?, phone = ? WHERE id = ?",
+        [fullName, englishName, email, email2, phone, req.user.id]
+      );
+    } else {
+      await pool.query(
+        "UPDATE users SET full_name = ?, email = ?, email_2 = ?, phone = ? WHERE id = ?",
+        [fullName, email, email2, phone, req.user.id]
+      );
+    }
 
     const [rows] = await pool.query(
-      "SELECT id, employee_code, full_name, department, role, supervisor_id, email, email_2, phone FROM users WHERE id = ? AND is_active = 1 LIMIT 1",
+      "SELECT id, employee_code, full_name, english_name, department, role, supervisor_id, email, email_2, phone FROM users WHERE id = ? AND is_active = 1 LIMIT 1",
       [req.user.id]
     );
     if (!rows[0]) return res.status(404).json({ message: "ไม่พบผู้ใช้งาน" });

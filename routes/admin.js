@@ -103,7 +103,7 @@ router.get("/leave-requests", async (req, res, next) => {
     const { status, user_id, year } = req.query;
 
     let sql = `
-      SELECT lr.*, u.full_name AS user_full_name, u.employee_code, u.department, u.role AS user_role, u.supervisor_id,
+      SELECT lr.*, u.full_name AS user_full_name, u.english_name AS user_english_name, u.employee_code, u.department, u.role AS user_role, u.supervisor_id,
              u.email, u.email_2, u.phone,
              lt.name AS leave_type_name, lt.max_days AS leave_type_max_days,
              approver.full_name AS approver_name, la.comment
@@ -165,7 +165,7 @@ router.post("/leave-requests", csrfProtect, uploadLeaveAttachments.array("attach
     }
 
     const [users] = await conn.query(
-      "SELECT id, full_name, employee_code, department, role, supervisor_id, email, email_2 FROM users WHERE id = ? AND is_active = 1 LIMIT 1",
+      "SELECT id, full_name, english_name, employee_code, department, role, supervisor_id, email, email_2 FROM users WHERE id = ? AND is_active = 1 LIMIT 1",
       [user_id]
     );
     if (!users[0]) return res.status(404).json({ message: "ไม่พบพนักงาน" });
@@ -286,7 +286,7 @@ router.post("/leave-requests", csrfProtect, uploadLeaveAttachments.array("attach
     await conn.commit();
 
     const [rows] = await pool.query(
-      `SELECT lr.*, u.full_name AS user_full_name, u.employee_code, u.department, u.role AS user_role, u.supervisor_id,
+      `SELECT lr.*, u.full_name AS user_full_name, u.english_name AS user_english_name, u.employee_code, u.department, u.role AS user_role, u.supervisor_id,
               u.email, u.email_2, u.phone,
               lt.name AS leave_type_name, lt.max_days AS leave_type_max_days,
               approver.full_name AS approver_name, la.comment
@@ -489,7 +489,7 @@ router.patch("/leave-requests/:id", csrfProtect, async (req, res, next) => {
     await conn.commit();
 
     const [rows] = await pool.query(
-      `SELECT lr.*, u.full_name AS user_full_name, u.employee_code, u.department, u.role AS user_role, u.supervisor_id,
+      `SELECT lr.*, u.full_name AS user_full_name, u.english_name AS user_english_name, u.employee_code, u.department, u.role AS user_role, u.supervisor_id,
               u.email, u.email_2, u.phone,
               lt.name AS leave_type_name, lt.max_days AS leave_type_max_days,
               approver.full_name AS approver_name, la.comment
@@ -822,7 +822,7 @@ router.patch("/leave-requests/:id/reject", csrfProtect, async (req, res, next) =
 // ── GET /api/admin/users ──────────────────────────────────────
 router.get("/users", async (req, res, next) => {
   try {
-    let sql = `SELECT id, employee_code, full_name, department, role, supervisor_id, email, email_2, phone, created_at FROM users`;
+    let sql = `SELECT id, employee_code, full_name, english_name, department, role, supervisor_id, email, email_2, phone, created_at FROM users`;
     const where = ["id != ?", "is_active = 1"];
     const params = [req.user.id];
 

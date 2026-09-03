@@ -147,7 +147,7 @@ router.get("/today", authenticate, async (req, res, next) => {
   try {
     const today = new Date().toISOString().split("T")[0];
     const [rows] = await pool.query(
-      `SELECT lr.*, u.full_name AS user_name, u.department AS user_department,
+      `SELECT lr.*, u.full_name AS user_name, u.english_name AS user_english_name, u.department AS user_department,
               u.email AS user_email, u.email_2 AS user_email_2, u.phone AS user_phone,
               lt.name AS leave_type_name, lt.description AS leave_type_description,
               lt.max_days AS leave_type_max_days
@@ -165,6 +165,7 @@ router.get("/today", authenticate, async (req, res, next) => {
       user: {
         id: r.user_id,
         full_name: r.user_name,
+        english_name: r.user_english_name ?? null,
         department: r.user_department,
         email: r.user_email,
         email_2: r.user_email_2,
@@ -185,7 +186,7 @@ router.get("/week", authenticate, async (req, res, next) => {
     const endDate = weekEnd.toISOString().split("T")[0];
 
     const [rows] = await pool.query(
-      `SELECT lr.*, u.full_name AS user_name, u.department AS user_department,
+      `SELECT lr.*, u.full_name AS user_name, u.english_name AS user_english_name, u.department AS user_department,
               u.email AS user_email, u.email_2 AS user_email_2, u.phone AS user_phone,
               lt.name AS leave_type_name, lt.description AS leave_type_description,
               lt.max_days AS leave_type_max_days
@@ -205,6 +206,7 @@ router.get("/week", authenticate, async (req, res, next) => {
       user: {
         id: r.user_id,
         full_name: r.user_name,
+        english_name: r.user_english_name ?? null,
         department: r.user_department,
         email: r.user_email,
         email_2: r.user_email_2,

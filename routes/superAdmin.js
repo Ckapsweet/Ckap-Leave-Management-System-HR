@@ -9,6 +9,12 @@ const router = Router();
 
 router.use(authenticate, requireRole("manager", "assistant manager", "admin"));
 
+function cleanOptional(value) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
 router.get("/audit-logs", async (req, res, next) => {
   try {
     const { action, actor_id, target_type, date_from, date_to, page = 1, limit = 50 } = req.query;
@@ -58,12 +64,12 @@ router.get("/users", async (req, res, next) => {
     if (role) { where.push("role = ?"); params.push(role); }
     if (department) { where.push("department = ?"); params.push(department); }
     if (search) {
-      where.push("(full_name LIKE ? OR employee_code LIKE ?)");
-      params.push(`%${search}%`, `%${search}%`);
+      where.push("(full_name LIKE ? OR english_name LIKE ? OR employee_code LIKE ?)");
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
     }
 
     const [rows] = await pool.query(
-      `SELECT id, employee_code, full_name, department, role, supervisor_id, created_at
+      `SELECT id, employee_code, full_name, english_name, department, role, supervisor_id, created_at
        FROM users WHERE ${where.join(" AND ")} ORDER BY created_at ASC`,
       params
     );
@@ -74,6 +80,7 @@ router.get("/users", async (req, res, next) => {
 router.post("/users", csrfProtect, async (req, res, next) => {
   try {
     const { employee_code, full_name, department, password, role = "user", supervisor_id = null } = req.body;
+    const english_name = cleanOptional(req.body.english_name);
 
     if (!employee_code || !full_name || !password) return res.status(400).json({ message: "กรุณากรอกข้อมูลให้ครบถ้วน" });
 
@@ -86,11 +93,11 @@ router.post("/users", csrfProtect, async (req, res, next) => {
 
     const hashed = await bcrypt.hash(password, 10);
     const [result] = await pool.query(
-      `INSERT INTO users (employee_code, full_name, department, password, role, supervisor_id) VALUES (?, ?, ?, ?, ?, ?)`,
-      [employee_code, full_name, department ?? null, hashed, role, supervisor_id]
+      `INSERT INTO users (employee_code, full_name, english_name, department, password, role, supervisor_id) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [employee_code, full_name, english_name, department ?? null, hashed, role, supervisor_id]
     );
 
-    const newUser = { id: result.insertId, employee_code, full_name, department, role, supervisor_id };
+    const newUser = { id: result.insertId, employee_code, full_name, english_name, department, role, supervisor_id };
 
     await logAudit({ req, action: "user.create", targetType: "user", targetId: result.insertId, after: newUser, note: `สร้าง user ${employee_code}` });
     res.status(201).json(newUser);
@@ -122,6 +129,35 @@ router.patch("/users/:id/role", csrfProtect, async (req, res, next) => {
     await logAudit({ req, action: "user.role_change", targetType: "user", targetId: rows[0].id, before, after: { role }, note: `เปลี่ยน role ${before.role} → ${role}` });
 
     res.json({ message: "เปลี่ยน role เรียบร้อย", role });
+  } catch (err) { next(err); }
+});
+
+router.patch("/users/:id/english-name", csrfProtect, async (req, res, next) => {
+  try {
+    if (!["manager", "admin"].includes(req.user.role)) {
+      return res.status(403).json({ message: "เฉพาะ Manager หรือ Admin เท่านั้นที่แก้ไขชื่ออังกฤษได้" });
+    }
+
+    const english_name = cleanOptional(req.body.english_name);
+    const [rows] = await pool.query(
+      "SELECT id, employee_code, full_name, english_name FROM users WHERE id = ? AND is_active = 1 LIMIT 1",
+      [req.params.id]
+    );
+    if (!rows[0]) return res.status(404).json({ message: "ไม่พบผู้ใช้งาน" });
+
+    const before = { english_name: rows[0].english_name ?? null };
+    await pool.query("UPDATE users SET english_name = ? WHERE id = ?", [english_name, req.params.id]);
+    await logAudit({
+      req,
+      action: "user.update",
+      targetType: "user",
+      targetId: rows[0].id,
+      before,
+      after: { english_name },
+      note: `แก้ไข English Name ของ user ${rows[0].employee_code}`,
+    });
+
+    res.json({ message: "อัปเดตชื่ออังกฤษเรียบร้อย", english_name });
   } catch (err) { next(err); }
 });
 

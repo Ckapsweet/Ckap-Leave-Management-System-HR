@@ -1,5 +1,5 @@
 // middleware/__tests__/auth.csrfProtect.test.js
-import { describe, it, expect, beforeEach, jest } from "@jest/globals";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { csrfProtect } from "../auth.js";
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -14,8 +14,8 @@ function makeReq({ method = "POST", cookieToken, headerToken } = {}) {
 
 function makeRes() {
   return {
-    status: jest.fn().mockReturnThis(),
-    json:   jest.fn().mockReturnThis(),
+    status: vi.fn().mockReturnThis(),
+    json:   vi.fn().mockReturnThis(),
   };
 }
 
@@ -26,7 +26,7 @@ describe("csrfProtect — safe methods (ข้าม CSRF check)", () => {
   let res;
 
   beforeEach(() => {
-    next = jest.fn();
+    next = vi.fn();
     res  = makeRes();
   });
 
@@ -59,7 +59,7 @@ describe("csrfProtect — POST/PATCH/DELETE ที่ token ถูกต้อ�
   let res;
 
   beforeEach(() => {
-    next = jest.fn();
+    next = vi.fn();
     res  = makeRes();
   });
 
@@ -94,7 +94,7 @@ describe("csrfProtect — POST ที่ token ไม่ถูกต้อง", 
   let res;
 
   beforeEach(() => {
-    next = jest.fn();
+    next = vi.fn();
     res  = makeRes();
   });
 
@@ -159,7 +159,7 @@ describe("csrfProtect — POST ที่ token ไม่ถูกต้อง", 
 
 describe("csrfProtect — ไม่เรียก next และ res ซ้ำ", () => {
   it("เรียก next เพียงครั้งเดียวเมื่อผ่าน", () => {
-    const next  = jest.fn();
+    const next  = vi.fn();
     const res   = makeRes();
     const token = "valid-token";
     csrfProtect(makeReq({ method: "POST", cookieToken: token, headerToken: token }), res, next);
@@ -167,14 +167,14 @@ describe("csrfProtect — ไม่เรียก next และ res ซ้ำ"
   });
 
   it("ไม่เรียก next เลยเมื่อ token ผิด", () => {
-    const next = jest.fn();
+    const next = vi.fn();
     const res  = makeRes();
     csrfProtect(makeReq({ method: "POST", cookieToken: "A", headerToken: "B" }), res, next);
     expect(next).not.toHaveBeenCalled();
   });
 
   it("response 403 เพียงครั้งเดียวเมื่อ token ผิด", () => {
-    const next = jest.fn();
+    const next = vi.fn();
     const res  = makeRes();
     csrfProtect(makeReq({ method: "POST", cookieToken: "A", headerToken: "B" }), res, next);
     expect(res.status).toHaveBeenCalledTimes(1);
