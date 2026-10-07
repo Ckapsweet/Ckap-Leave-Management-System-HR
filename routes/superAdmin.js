@@ -161,6 +161,43 @@ router.patch("/users/:id/english-name", csrfProtect, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+router.patch("/users/:id/name", csrfProtect, async (req, res, next) => {
+  try {
+    if (req.user.role !== "admin") {
+      return res.status(403).json({ message: "เฉพาะ Admin เท่านั้นที่แก้ไขชื่อผู้ใช้งานได้" });
+    }
+
+    const full_name = typeof req.body.full_name === "string" ? req.body.full_name.trim() : "";
+    if (!full_name) return res.status(400).json({ message: "กรุณาระบุชื่อภาษาไทย" });
+
+    const shouldUpdateEnglishName = Object.prototype.hasOwnProperty.call(req.body, "english_name");
+    const [rows] = await pool.query(
+      "SELECT id, employee_code, full_name, english_name FROM users WHERE id = ? AND is_active = 1 LIMIT 1",
+      [req.params.id]
+    );
+    if (!rows[0]) return res.status(404).json({ message: "ไม่พบผู้ใช้งาน" });
+
+    const english_name = shouldUpdateEnglishName ? cleanOptional(req.body.english_name) : rows[0].english_name ?? null;
+    if (full_name.length > 255 || (english_name && english_name.length > 255)) {
+      return res.status(400).json({ message: "ชื่อยาวเกิน 255 ตัวอักษร" });
+    }
+
+    const before = { full_name: rows[0].full_name, english_name: rows[0].english_name ?? null };
+    await pool.query("UPDATE users SET full_name = ?, english_name = ? WHERE id = ?", [full_name, english_name, rows[0].id]);
+    await logAudit({
+      req,
+      action: "user.update",
+      targetType: "user",
+      targetId: rows[0].id,
+      before,
+      after: { full_name, english_name },
+      note: `แก้ไขชื่อของ user ${rows[0].employee_code}`,
+    });
+
+    res.json({ message: "อัปเดตชื่อเรียบร้อย", full_name, english_name });
+  } catch (err) { next(err); }
+});
+
 router.patch("/users/:id/password", csrfProtect, async (req, res, next) => {
   try {
     if (req.user.role !== "admin") {
