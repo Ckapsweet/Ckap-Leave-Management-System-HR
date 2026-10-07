@@ -142,10 +142,21 @@ async function findInitialAssignee(conn, userId) {
   return fallbackRows[0]?.id ?? supRows[0]?.id ?? null;
 }
 
+// วันที่ตามเวลาเครื่อง (YYYY-MM-DD) — toISOString() เป็น UTC ทำให้ช่วง 00:00–07:00 ได้วันของเมื่อวาน
+function toLocalDateString(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+// คนที่มีวันลาในสัปดาห์นี้ จะเห็นวันลาถัดไปของเขาด้วยไม่เกินกี่วันข้างหน้า
+const WEEK_UPCOMING_DAYS = 30;
+
 // ── GET /api/leave-requests/today ─────────────────────────────
 router.get("/today", authenticate, async (req, res, next) => {
   try {
-    const today = new Date().toISOString().split("T")[0];
+    const today = toLocalDateString(new Date());
     const [rows] = await pool.query(
       `SELECT lr.*, u.full_name AS user_name, u.english_name AS user_english_name, u.department AS user_department,
               u.email AS user_email, u.email_2 AS user_email_2, u.phone AS user_phone,
@@ -181,9 +192,12 @@ router.get("/week", authenticate, async (req, res, next) => {
     const today = new Date();
     const weekEnd = new Date(today);
     weekEnd.setDate(today.getDate() + 6);
+    const upcomingEnd = new Date(today);
+    upcomingEnd.setDate(today.getDate() + WEEK_UPCOMING_DAYS);
 
-    const startDate = today.toISOString().split("T")[0];
-    const endDate = weekEnd.toISOString().split("T")[0];
+    const startDate = toLocalDateString(today);
+    const endDate = toLocalDateString(weekEnd);
+    const upcomingEndDate = toLocalDateString(upcomingEnd);
 
     const [rows] = await pool.query(
       `SELECT lr.*, u.full_name AS user_name, u.english_name AS user_english_name, u.department AS user_department,
@@ -197,8 +211,14 @@ router.get("/week", authenticate, async (req, res, next) => {
          AND u.department = ?
          AND lr.start_date <= ?
          AND lr.end_date >= ?
+         AND lr.user_id IN (
+           SELECT wk.user_id FROM leave_requests wk
+           WHERE wk.status = 'approved'
+             AND wk.start_date <= ?
+             AND wk.end_date >= ?
+         )
        ORDER BY lr.start_date ASC, u.full_name ASC`,
-      [req.user.department, endDate, startDate]
+      [req.user.department, upcomingEndDate, startDate, endDate, startDate]
     );
 
     res.json(rows.map(r => ({
