@@ -152,6 +152,15 @@ function toLocalDateString(date) {
 
 // คนที่มีวันลาในสัปดาห์นี้ จะเห็นวันลาถัดไปของเขาด้วยไม่เกินกี่วันข้างหน้า
 const WEEK_UPCOMING_DAYS = 30;
+// จำนวนวันที่ /week ครอบคลุม (?days=14 สำหรับปฏิทิน 2 สัปดาห์)
+const WEEK_DEFAULT_DAYS = 7;
+const WEEK_MAX_DAYS = 31;
+
+function parseWeekDays(value) {
+  const days = Number.parseInt(value, 10);
+  if (!Number.isFinite(days) || days < 1) return WEEK_DEFAULT_DAYS;
+  return Math.min(days, WEEK_MAX_DAYS);
+}
 
 // ── GET /api/leave-requests/today ─────────────────────────────
 router.get("/today", authenticate, async (req, res, next) => {
@@ -190,11 +199,12 @@ router.get("/today", authenticate, async (req, res, next) => {
 // ── GET /api/leave-requests/week ──────────────────────────────
 router.get("/week", authenticate, async (req, res, next) => {
   try {
+    const days = parseWeekDays(req.query.days);
     const today = new Date();
     const weekEnd = new Date(today);
-    weekEnd.setDate(today.getDate() + 6);
+    weekEnd.setDate(today.getDate() + days - 1);
     const upcomingEnd = new Date(today);
-    upcomingEnd.setDate(today.getDate() + WEEK_UPCOMING_DAYS);
+    upcomingEnd.setDate(today.getDate() + Math.max(WEEK_UPCOMING_DAYS, days - 1));
 
     const startDate = toLocalDateString(today);
     const endDate = toLocalDateString(weekEnd);

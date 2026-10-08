@@ -96,6 +96,28 @@ describe("GET /api/leave-requests/week", () => {
     expect(params).toEqual(["IT", "2026-11-06", "2026-10-07", "2026-10-13", "2026-10-07"]);
   });
 
+  it("covers 14 days when asked for two weeks", async () => {
+    pool.query.mockResolvedValueOnce([[]]);
+
+    const res = await request(app).get("/api/leave-requests/week?days=14");
+    vi.useRealTimers();
+
+    expect(res.status).toBe(200);
+    expect(pool.query.mock.calls[0][1]).toEqual(["IT", "2026-11-06", "2026-10-07", "2026-10-20", "2026-10-07"]);
+  });
+
+  it("falls back to 7 days and caps large values", async () => {
+    pool.query.mockResolvedValueOnce([[]]).mockResolvedValueOnce([[]]);
+
+    await request(app).get("/api/leave-requests/week?days=abc");
+    await request(app).get("/api/leave-requests/week?days=999");
+    vi.useRealTimers();
+
+    expect(pool.query.mock.calls[0][1][3]).toBe("2026-10-13");
+    expect(pool.query.mock.calls[1][1][3]).toBe("2026-11-06");
+    expect(pool.query.mock.calls[1][1][1]).toBe("2026-11-06");
+  });
+
   it("uses the local date for today", async () => {
     vi.setSystemTime(new Date(2026, 9, 8, 0, 30, 0));
     pool.query.mockResolvedValueOnce([[]]);
