@@ -158,7 +158,7 @@ router.get("/today", authenticate, async (req, res, next) => {
   try {
     const today = toLocalDateString(new Date());
     const [rows] = await pool.query(
-      `SELECT lr.*, u.full_name AS user_name, u.english_name AS user_english_name, u.department AS user_department,
+      `SELECT lr.*, u.full_name AS user_name, u.english_name AS user_english_name, u.employee_code AS user_employee_code, u.department AS user_department,
               u.email AS user_email, u.email_2 AS user_email_2, u.phone AS user_phone,
               lt.name AS leave_type_name, lt.description AS leave_type_description,
               lt.max_days AS leave_type_max_days
@@ -177,6 +177,7 @@ router.get("/today", authenticate, async (req, res, next) => {
         id: r.user_id,
         full_name: r.user_name,
         english_name: r.user_english_name ?? null,
+        employee_code: r.user_employee_code,
         department: r.user_department,
         email: r.user_email,
         email_2: r.user_email_2,
@@ -200,7 +201,7 @@ router.get("/week", authenticate, async (req, res, next) => {
     const upcomingEndDate = toLocalDateString(upcomingEnd);
 
     const [rows] = await pool.query(
-      `SELECT lr.*, u.full_name AS user_name, u.english_name AS user_english_name, u.department AS user_department,
+      `SELECT lr.*, u.full_name AS user_name, u.english_name AS user_english_name, u.employee_code AS user_employee_code, u.department AS user_department,
               u.email AS user_email, u.email_2 AS user_email_2, u.phone AS user_phone,
               lt.name AS leave_type_name, lt.description AS leave_type_description,
               lt.max_days AS leave_type_max_days
@@ -227,6 +228,7 @@ router.get("/week", authenticate, async (req, res, next) => {
         id: r.user_id,
         full_name: r.user_name,
         english_name: r.user_english_name ?? null,
+        employee_code: r.user_employee_code,
         department: r.user_department,
         email: r.user_email,
         email_2: r.user_email_2,
@@ -577,6 +579,59 @@ router.post("/", authenticate, csrfProtect, uploadLeaveAttachments.array("attach
     }
     next(err);
   } finally { conn.release(); }
+});
+
+// ── PATCH /api/leave-requests/:id  (เจ้าของแก้รายการทำงานนอกสถานที่) ──
+// รายการนอกสถานที่ไม่หักวันลา จึงแก้วันที่/หมายเหตุได้เองโดยไม่กระทบยอดคงเหลือ
+router.patch("/:id", authenticate, csrfProtect, async (req, res, next) => {
+  try {
+    const { start_date, end_date, reason } = req.body ?? {};
+    const trimmedReason = typeof reason === "string" ? reason.trim() : "";
+    if (!start_date || !end_date || !trimmedReason) {
+      return res.status(400).json({ message: "กรุณากรอกข้อมูลให้ครบถ้วน" });
+    }
+
+    const start = new Date(start_date);
+    const end = new Date(end_date);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) {
+      return res.status(400).json({ message: "วันที่ไม่ถูกต้อง" });
+    }
+
+    const [rows] = await pool.query(
+      "SELECT * FROM leave_requests WHERE id = ? AND user_id = ? LIMIT 1",
+      [req.params.id, req.user.id]
+    );
+    const before = rows[0];
+    if (!before) return res.status(404).json({ message: "ไม่พบคำขอลา" });
+    if (before.request_type !== OFFSITE_REQUEST_TYPE) {
+      return res.status(400).json({ message: "แก้ไขเองได้เฉพาะรายการทำงานนอกสถานที่ หากต้องการแก้วันลาให้ติดต่อผู้ดูแลระบบ" });
+    }
+
+    const totalDays = Math.max(1, Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1);
+
+    await pool.query(
+      "UPDATE leave_requests SET start_date = ?, end_date = ?, total_days = ?, reason = ? WHERE id = ?",
+      [start_date, end_date, totalDays, trimmedReason, before.id]
+    );
+
+    await logAudit({
+      req,
+      action: "leave.update",
+      targetType: "leave_request",
+      targetId: before.id,
+      before: {
+        start_date: before.start_date,
+        end_date: before.end_date,
+        total_days: before.total_days,
+        reason: before.reason,
+      },
+      after: { start_date, end_date, total_days: totalDays, reason: trimmedReason },
+    });
+
+    res.json({ message: "แก้ไขรายการเรียบร้อย", id: before.id, start_date, end_date, total_days: totalDays, reason: trimmedReason });
+  } catch (err) {
+    next(err);
+  }
 });
 
 // ── DELETE /api/leave-requests/:id  (user cancel) ────────────
